@@ -186,12 +186,72 @@ GET  /bucket?uploads                        → ListMultipartUploads
 GET  /bucket/key?uploadId=X                 → ListParts
 ```
 
-### Phase 7: Operations & Observability ⚠️ NEXT PHASE
-- [ ] Garbage collection for orphan blobs
-- [ ] Prometheus metrics
-- [ ] Health check endpoints
-- [ ] Request tracing
-- [ ] Rate limiting
+### Phase 7: Operations & Observability ✅ COMPLETED
+- [x] Garbage collection for orphan blobs - `internal/service/gc_service.go`
+- [x] Prometheus metrics - `internal/metrics/metrics.go`
+- [x] Health check endpoints - `internal/handler/health.go`
+- [x] Request tracing - `internal/middleware/tracing.go`
+- [x] Rate limiting - `internal/middleware/ratelimit.go`
+
+**Implementation Details:**
+
+**Garbage Collection:**
+- Automatic background GC with configurable interval (default: 1 hour)
+- Grace period prevents deleting blobs during active uploads (default: 24 hours)
+- Batch processing with configurable size (default: 1000 blobs per run)
+- Dry run mode for testing without actual deletion
+- Tracks orphan blobs (ref_count = 0) and cleans up both DB and storage
+
+**Prometheus Metrics:**
+- Separate metrics server on configurable port (default: 9091)
+- HTTP request metrics: total, duration, in-flight, response size
+- Storage metrics: operations, duration, bytes transferred
+- Auth metrics: attempts, failures with reasons
+- GC metrics: runs, blobs deleted, bytes freed, duration
+- Rate limiting metrics: requests limited by type
+
+**Health Endpoints:**
+```
+GET /health     → Full component health with latency
+GET /healthz    → Kubernetes liveness probe
+GET /readyz     → Kubernetes readiness probe
+```
+- Component-level status (database, storage)
+- Cached responses for efficiency (default: 5s TTL)
+- Status levels: healthy, degraded, unhealthy
+
+**Request Tracing:**
+- Automatic request ID generation (X-Request-ID header)
+- Trace ID propagation for distributed tracing
+- S3-compatible headers (x-amz-request-id, x-amz-id-2)
+- Structured logging with request context
+- Path normalization for low-cardinality metrics
+
+**Rate Limiting:**
+- Token bucket algorithm per client IP
+- Configurable rate (default: 100 req/s) and burst (default: 200)
+- S3-compatible SlowDown error response
+- Automatic bucket cleanup for stale clients
+- Optional bandwidth limiting support
+
+**Configuration:**
+```yaml
+metrics:
+  enabled: true
+  port: 9091
+  path: /metrics
+
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+  burst_size: 200
+
+gc:
+  enabled: true
+  interval: 1h
+  grace_period: 24h
+  batch_size: 1000
+```
 
 ### Phase 8: Architecture Improvements (Community Requested)
 > **Community Feedback**: "PostgreSQL + Redis is overkill for single-node deployments."
@@ -206,6 +266,8 @@ GET  /bucket/key?uploadId=X                 → ListParts
 - [ ] Cross-region replication
 - [ ] Server-side encryption
 - [ ] Object locking (WORM)
+- [ ] WEB Dashboard (webui)
+- [ ] Python and PHP sdk
 
 ---
 
@@ -408,13 +470,13 @@ Path: /data/ab/cd/abcdef1234567890...
 ## Section 4: Current Context
 
 ### Active Development Phase
-**Phase 7: Operations & Observability**
+**Phase 8: Architecture Improvements**
 
 ### Current Task
-Planning next phase: Garbage collection, metrics, health checks
+Planning next phase: Embedded database support, single-node optimization
 
 ### Last Updated
-2025-01-08
+2025-12-04
 
 ### Completed Phases
 - ✅ Phase 1: Core Infrastructure
@@ -423,20 +485,26 @@ Planning next phase: Garbage collection, metrics, health checks
 - ✅ Phase 4: Object Operations
 - ✅ Phase 5: Versioning
 - ✅ Phase 6: Multipart Upload
+- ✅ Phase 7: Operations & Observability
 
 ### Files Modified This Session
-- `internal/service/multipart_service.go` - Complete multipart upload service
-- `internal/service/multipart_service_test.go` - Unit tests (15 tests passing)
-- `internal/handler/multipart_handler.go` - HTTP handlers with S3 XML responses
-- `internal/handler/router.go` - Multipart upload routing
-- `cmd/alexander-server/main.go` - Wired MultipartService and MultipartHandler
-- `MEMORY_BANK.md` - Updated with Phase 6 completion
+- `internal/metrics/metrics.go` - Prometheus metrics definitions
+- `internal/middleware/ratelimit.go` - Token bucket rate limiting
+- `internal/middleware/tracing.go` - Request tracing and correlation IDs
+- `internal/service/gc_service.go` - Garbage collection service
+- `internal/handler/health.go` - Enhanced health check endpoints
+- `internal/handler/router.go` - Integrated new middleware
+- `internal/config/config.go` - Added metrics, rate_limit, gc config sections
+- `internal/storage/interfaces.go` - Added HealthCheck method
+- `internal/storage/filesystem/storage.go` - Implemented HealthCheck
+- `internal/storage/errors.go` - Added IsNotFound helper
+- `cmd/alexander-server/main.go` - Wired GC, metrics server, middleware
+- `MEMORY_BANK.md` - Updated with Phase 7 completion
 
 ### Pending Tasks
-1. Garbage collection for orphan blobs (Phase 7)
-2. Prometheus metrics (Phase 7)
-3. Health check endpoints (Phase 7)
-4. Add embedded database option (Phase 8)
+1. Embedded database support (SQLite/BadgerDB) - Phase 8
+2. Memory-based locking for single-node mode - Phase 8
+3. Single binary deployment mode - Phase 8
 
 ### Known Issues
 None currently.

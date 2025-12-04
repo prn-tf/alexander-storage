@@ -203,6 +203,11 @@ func (m *mockStorageBackend2) GetPath(hash string) string {
 	return args.String(0)
 }
 
+func (m *mockStorageBackend2) HealthCheck(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
 // mockBucketRepository is a mock for bucket repository in object tests
 type mockBucketRepository struct {
 	mock.Mock

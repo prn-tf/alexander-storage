@@ -81,6 +81,10 @@ gc:
   interval: 1h
   # Grace period before deleting orphan blobs
   grace_period: 24h
+  # Number of blobs to process per run
+  batch_size: 1000
+  # Dry run mode (log without deleting)
+  dry_run: false
 
 # Logging
 logging:
@@ -92,9 +96,22 @@ logging:
 # Metrics (Prometheus)
 metrics:
   enabled: true
+  port: 9091
   path: "/metrics"
 
-# Health check
-health:
-  path: "/health"
-  detailed: true
+# Rate limiting
+rate_limit:
+  enabled: true
+  # Requests per second per client
+  requests_per_second: 100
+  # Burst capacity (max requests before limiting)
+  burst_size: 200
+  # Bandwidth limiting (optional)
+  bandwidth_enabled: false
+  bytes_per_second: 104857600  # 100 MB/s
+
+# Health check endpoints
+# Available endpoints:
+#   GET /health  - Full component status with latency
+#   GET /healthz - Kubernetes liveness probe
+#   GET /readyz  - Kubernetes readiness probe
