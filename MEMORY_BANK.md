@@ -116,19 +116,22 @@
 - [x] Repository interfaces
 - [x] Storage interfaces
 - [x] Crypto utilities (AES-256-GCM)
-- [ ] Configuration loading (Viper)
-- [ ] Logging setup (Zerolog)
+- [x] Configuration loading (Viper) - `internal/config/config.go`
+- [x] Logging setup (Zerolog)
 
-### Phase 2: IAM & Authentication (Current)
-- [x] AWS v4 signature parsing
-- [x] Signature verification (HMAC-SHA256)
-- [ ] Access key management (create, list, revoke)
-- [ ] User management (create, authenticate)
-- [ ] Auth middleware integration
-- [ ] Presigned URL generation
-- [ ] Presigned URL verification
+### Phase 2: IAM & Authentication ✅ COMPLETED
+- [x] AWS v4 signature parsing - `internal/auth/parser.go`
+- [x] Signature verification (HMAC-SHA256) - `internal/auth/signature_v4.go`
+- [x] Auth middleware integration - `internal/auth/middleware.go`
+- [x] PostgreSQL repositories - `internal/repository/postgres/`
+- [x] Redis cache implementation - `internal/cache/redis/`
+- [x] Presigned URL verification - `internal/auth/middleware.go` (handlePresignedV4)
+- [x] IAM Service layer - `internal/service/iam_service.go`
+- [x] User Service layer - `internal/service/user_service.go`
+- [x] Presigned URL generation service - `internal/service/presign_service.go`
+- [x] AccessKeyStore adapter for auth middleware integration
 
-### Phase 3: Bucket Operations
+### Phase 3: Bucket Operations (Current)
 - [ ] CreateBucket
 - [ ] DeleteBucket
 - [ ] ListBuckets
@@ -328,10 +331,10 @@ Path: /data/ab/cd/abcdef1234567890...
 ## Section 4: Current Context
 
 ### Active Development Phase
-**Phase 2: IAM & Authentication**
+**Phase 3: Bucket Operations**
 
 ### Current Task
-Implementing configuration loading, PostgreSQL repositories, and IAM services
+Implementing bucket service and handlers for S3-compatible bucket operations
 
 ### Last Updated
 2025-12-04
@@ -351,17 +354,23 @@ Implementing configuration loading, PostgreSQL repositories, and IAM services
 - `migrations/postgres/000001_init.down.sql` - Schema rollback
 - `internal/domain/*.go` - Domain models (7 files)
 - `internal/pkg/crypto/*.go` - Crypto utilities (3 files)
-- `internal/storage/*.go` - Storage interfaces (2 files)
-- `internal/repository/*.go` - Repository interfaces (2 files)
-- `internal/auth/*.go` - Auth middleware (6 files)
+- `internal/storage/*.go` - Storage interfaces (3 files)
+- `internal/storage/filesystem/storage.go` - Filesystem storage implementation
+- `internal/repository/*.go` - Repository interfaces (3 files)
+- `internal/repository/postgres/*.go` - PostgreSQL repositories (8 files)
+- `internal/cache/redis/*.go` - Redis cache implementation (2 files)
+- `internal/config/config.go` - Configuration loading with Viper
+- `internal/auth/*.go` - Auth middleware and AWS v4 signature (6 files)
+- `internal/service/errors.go` - Service layer error definitions
+- `internal/service/user_service.go` - User management service
+- `internal/service/iam_service.go` - IAM/access key management service
+- `internal/service/presign_service.go` - Presigned URL generation service
 
 ### Pending Tasks
-1. Implement configuration loading (`internal/config/config.go`)
-2. Implement PostgreSQL repositories (`internal/repository/postgres/`)
-3. Implement Redis cache (`internal/repository/redis/`)
-4. Create IAM service (`internal/service/iam_service.go`)
-5. Wire auth middleware with real access key store
-6. Implement presigned URL generation
+1. Implement BucketService (`internal/service/bucket_service.go`)
+2. Create HTTP handlers for bucket operations
+3. Wire services with chi router
+4. Add integration tests for bucket operations
 
 ### Known Issues
 None currently.

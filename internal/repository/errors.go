@@ -2,6 +2,12 @@ package repository
 
 import "errors"
 
+// Repository errors
+var (
+	// ErrNotFound indicates the requested entity was not found.
+	ErrNotFound = errors.New("not found")
+)
+
 // Cache and lock errors
 var (
 	// ErrCacheMiss indicates the key was not found in cache.

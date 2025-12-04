@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GO_VERSION: '1.21'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          
+          # Linux
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-server-linux-amd64 ./cmd/alexander-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-admin-linux-amd64 ./cmd/alexander-admin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-migrate-linux-amd64 ./cmd/alexander-migrate
+          
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/alexander-server-linux-arm64 ./cmd/alexander-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/alexander-admin-linux-arm64 ./cmd/alexander-admin
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/alexander-migrate-linux-arm64 ./cmd/alexander-migrate
+          
+          # macOS
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-server-darwin-amd64 ./cmd/alexander-server
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-admin-darwin-amd64 ./cmd/alexander-admin
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-migrate-darwin-amd64 ./cmd/alexander-migrate
+          
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/alexander-server-darwin-arm64 ./cmd/alexander-server
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/alexander-admin-darwin-arm64 ./cmd/alexander-admin
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/alexander-migrate-darwin-arm64 ./cmd/alexander-migrate
+          
+          # Windows
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-server-windows-amd64.exe ./cmd/alexander-server
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-admin-windows-amd64.exe ./cmd/alexander-admin
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/alexander-migrate-windows-amd64.exe ./cmd/alexander-migrate
+
+      - name: Create archives
+        run: |
+          cd dist
+          
+          # Linux amd64
+          tar -czvf alexander-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz \
+            alexander-server-linux-amd64 alexander-admin-linux-amd64 alexander-migrate-linux-amd64
+          
+          # Linux arm64
+          tar -czvf alexander-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz \
+            alexander-server-linux-arm64 alexander-admin-linux-arm64 alexander-migrate-linux-arm64
+          
+          # macOS amd64
+          tar -czvf alexander-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz \
+            alexander-server-darwin-amd64 alexander-admin-darwin-amd64 alexander-migrate-darwin-amd64
+          
+          # macOS arm64
+          tar -czvf alexander-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz \
+            alexander-server-darwin-arm64 alexander-admin-darwin-arm64 alexander-migrate-darwin-arm64
+          
+          # Windows amd64
+          zip alexander-${{ steps.version.outputs.VERSION }}-windows-amd64.zip \
+            alexander-server-windows-amd64.exe alexander-admin-windows-amd64.exe alexander-migrate-windows-amd64.exe
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
