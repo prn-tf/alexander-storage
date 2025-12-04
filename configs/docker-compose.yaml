@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  # Alexander Storage Server
+  alexander:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: alexander-storage
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    environment:
+      - ALEXANDER_DATABASE_HOST=postgres
+      - ALEXANDER_DATABASE_PORT=5432
+      - ALEXANDER_DATABASE_USER=alexander
+      - ALEXANDER_DATABASE_PASSWORD=alexander
+      - ALEXANDER_DATABASE_DATABASE=alexander
+      - ALEXANDER_REDIS_HOST=redis
+      - ALEXANDER_REDIS_PORT=6379
+      - ALEXANDER_STORAGE_FILESYSTEM_BASE_PATH=/data
+      - ALEXANDER_AUTH_MASTER_KEY=${MASTER_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+    volumes:
+      - alexander_data:/data
+      - ./config.yaml:/config/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - alexander-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: alexander-postgres
+    environment:
+      POSTGRES_USER: alexander
+      POSTGRES_PASSWORD: alexander
+      POSTGRES_DB: alexander
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../migrations/postgres:/docker-entrypoint-initdb.d:ro
+    restart: unless-stopped
+    networks:
+      - alexander-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alexander -d alexander"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: alexander-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    networks:
+      - alexander-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # Adminer (Database Admin UI) - Development only
+  adminer:
+    image: adminer:latest
+    container_name: alexander-adminer
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - alexander-network
+    profiles:
+      - dev
+
+  # Redis Commander (Redis Admin UI) - Development only
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: alexander-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - alexander-network
+    profiles:
+      - dev
+
+volumes:
+  alexander_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  alexander-network:
+    driver: bridge
