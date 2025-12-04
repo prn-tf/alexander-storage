@@ -13,6 +13,7 @@ import (
 // Router handles HTTP routing for the S3-compatible API.
 type Router struct {
 	bucketHandler  *BucketHandler
+	objectHandler  *ObjectHandler
 	authMiddleware func(http.Handler) http.Handler
 	logger         zerolog.Logger
 }
@@ -20,6 +21,7 @@ type Router struct {
 // RouterConfig contains configuration for the router.
 type RouterConfig struct {
 	BucketHandler  *BucketHandler
+	ObjectHandler  *ObjectHandler
 	AuthMiddleware func(http.Handler) http.Handler
 	Logger         zerolog.Logger
 }
@@ -28,6 +30,7 @@ type RouterConfig struct {
 func NewRouter(config RouterConfig) *Router {
 	return &Router{
 		bucketHandler:  config.BucketHandler,
+		objectHandler:  config.ObjectHandler,
 		authMiddleware: config.AuthMiddleware,
 		logger:         config.Logger.With().Str("component", "router").Logger(),
 	}
@@ -136,37 +139,46 @@ func (rt *Router) handleBucketRequest(w http.ResponseWriter, r *http.Request, bu
 }
 
 // handleObjectRequest routes object-level requests.
-// This is a placeholder for Phase 4.
 func (rt *Router) handleObjectRequest(w http.ResponseWriter, r *http.Request, bucketName, objectKey string) {
-	// TODO: Implement in Phase 4 (Object Operations)
-	writeError(w, S3Error{
-		Code:           "NotImplemented",
-		Message:        "Object operations are not yet implemented.",
-		HTTPStatusCode: http.StatusNotImplemented,
-	})
+	query := r.URL.Query()
+
+	switch r.Method {
+	case http.MethodGet:
+		rt.objectHandler.HandleGetObject(w, r, bucketName, objectKey)
+	case http.MethodHead:
+		rt.objectHandler.HandleHeadObject(w, r, bucketName, objectKey)
+	case http.MethodPut:
+		// Check for copy operation (x-amz-copy-source header)
+		if r.Header.Get("x-amz-copy-source") != "" {
+			rt.objectHandler.HandleCopyObject(w, r, bucketName, objectKey)
+			return
+		}
+		rt.objectHandler.HandlePutObject(w, r, bucketName, objectKey)
+	case http.MethodDelete:
+		// Check for versionId query parameter
+		versionID := query.Get("versionId")
+		rt.objectHandler.HandleDeleteObject(w, r, bucketName, objectKey, versionID)
+	default:
+		writeError(w, S3Error{
+			Code:           "MethodNotAllowed",
+			Message:        "The specified method is not allowed against this resource.",
+			HTTPStatusCode: http.StatusMethodNotAllowed,
+		})
+	}
 }
 
 // handleListObjects handles ListObjects requests.
-// This is a placeholder for Phase 4.
 func (rt *Router) handleListObjects(w http.ResponseWriter, r *http.Request, bucketName string) {
-	// TODO: Implement in Phase 4 (Object Operations)
-	// For now, return empty list
-	writeXML(w, http.StatusOK, struct {
-		XMLName     string `xml:"ListBucketResult"`
-		Xmlns       string `xml:"xmlns,attr"`
-		Name        string `xml:"Name"`
-		Prefix      string `xml:"Prefix"`
-		Marker      string `xml:"Marker"`
-		MaxKeys     int    `xml:"MaxKeys"`
-		IsTruncated bool   `xml:"IsTruncated"`
-	}{
-		Xmlns:       "http://s3.amazonaws.com/doc/2006-03-01/",
-		Name:        bucketName,
-		Prefix:      "",
-		Marker:      "",
-		MaxKeys:     1000,
-		IsTruncated: false,
-	})
+	query := r.URL.Query()
+
+	// Check for list-type=2 (ListObjectsV2)
+	if query.Get("list-type") == "2" {
+		rt.objectHandler.HandleListObjectsV2(w, r, bucketName)
+		return
+	}
+
+	// ListObjectsV1
+	rt.objectHandler.HandleListObjects(w, r, bucketName)
 }
 
 // CreateAuthMiddleware creates an authentication middleware using the provided store.

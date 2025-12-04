@@ -20,6 +20,8 @@ import (
 	"github.com/prn-tf/alexander-storage/internal/pkg/crypto"
 	"github.com/prn-tf/alexander-storage/internal/repository/postgres"
 	"github.com/prn-tf/alexander-storage/internal/service"
+	"github.com/prn-tf/alexander-storage/internal/storage"
+	"github.com/prn-tf/alexander-storage/internal/storage/filesystem"
 )
 
 // Version information (set at build time)
@@ -67,6 +69,8 @@ func main() {
 	userRepo := postgres.NewUserRepository(db)
 	accessKeyRepo := postgres.NewAccessKeyRepository(db)
 	bucketRepo := postgres.NewBucketRepository(db)
+	objectRepo := postgres.NewObjectRepository(db)
+	blobRepo := postgres.NewBlobRepository(db)
 
 	// Initialize encryptor
 	encryptionKey, err := cfg.Auth.GetEncryptionKey()
@@ -78,9 +82,16 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to initialize encryptor")
 	}
 
+	// Initialize storage backend
+	storageBackend, err := initStorageBackend(cfg)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize storage backend")
+	}
+
 	// Initialize services
 	iamService := service.NewIAMService(accessKeyRepo, userRepo, encryptor, log.Logger)
 	bucketService := service.NewBucketService(bucketRepo, log.Logger)
+	objectService := service.NewObjectService(bucketRepo, objectRepo, blobRepo, storageBackend, log.Logger)
 
 	// Initialize auth middleware
 	accessKeyStore := service.NewAccessKeyStoreAdapter(iamService)
@@ -94,10 +105,12 @@ func main() {
 
 	// Initialize handlers
 	bucketHandler := handler.NewBucketHandler(bucketService, log.Logger)
+	objectHandler := handler.NewObjectHandler(objectService, log.Logger)
 
 	// Initialize router
 	router := handler.NewRouter(handler.RouterConfig{
 		BucketHandler:  bucketHandler,
+		ObjectHandler:  objectHandler,
 		AuthMiddleware: authMiddleware,
 		Logger:         log.Logger,
 	})
@@ -139,4 +152,11 @@ func main() {
 	}
 
 	log.Info().Msg("Server stopped")
+}
+
+// initStorageBackend initializes the storage backend based on configuration.
+func initStorageBackend(cfg *config.Config) (storage.Backend, error) {
+	// For now, we only support filesystem backend
+	// TODO: Add support for other backends (S3, Azure Blob, etc.)
+	return filesystem.NewStorage(cfg.Storage.DataDir)
 }
