@@ -610,77 +610,39 @@ None currently.
 ### 🔴 High Priority (Blocking Features)
 
 #### TD-001: Redis Distributed Lock Not Implemented
-**Status**: ❌ Not Started  
-**Files**: `internal/lock/`  
-**Description**: Memory locker exists but Redis-based distributed lock is missing. Required for multi-node deployments.
+**Status**: ✅ Completed (2025-01-06)  
+**Files**: `internal/lock/redis.go`  
+**Description**: Redis-based distributed lock implemented. Uses adapter pattern to wrap `cache/redis.DistributedLock` as `lock.Locker` interface.
 
-**Current State**:
-- `internal/lock/interfaces.go` - Locker interface ✅
-- `internal/lock/memory.go` - In-memory implementation ✅
-- `internal/lock/noop.go` - No-op for testing ✅
-- `internal/lock/redis.go` - **MISSING** ❌
-
-**Impact**: Distributed mode (`redis.enabled: true`) cannot use proper distributed locking.
-
-**Solution**:
-```go
-// internal/lock/redis.go
-type RedisLocker struct {
-    client *redis.Client
-    prefix string
-}
-
-func (l *RedisLocker) Acquire(ctx context.Context, key string, ttl time.Duration) (bool, error)
-func (l *RedisLocker) Release(ctx context.Context, key string) error
-```
+**Implementation**:
+- Created `internal/lock/redis.go` with `RedisLocker` struct
+- Wraps existing `cache/redis.DistributedLock` functionality
+- Implements all 5 interface methods: `Acquire`, `AcquireWithRetry`, `Release`, `Extend`, `IsHeld`
+- Compile-time interface check included
 
 ---
 
 #### TD-002: Lock Not Integrated Into Services
-**Status**: ❌ Not Started  
+**Status**: ✅ Completed (2025-01-06)  
 **Files**: `cmd/alexander-server/main.go`, `internal/service/*.go`  
-**Description**: Locker is created but ignored with `_ = locker`. Should be injected into services for concurrent operation safety.
+**Description**: Locker is now integrated into services for concurrent operation safety.
 
-**Current State** (main.go lines 152-154):
-```go
-// Silence unused variable warnings
-_ = memCache
-_ = locker
-```
-
-**Impact**: Race conditions possible during concurrent operations (e.g., multipart completion, blob ref_count updates).
-
-**Solution**:
-1. Add `Locker` parameter to service constructors
-2. Use locks in critical sections:
-   - `MultipartService.CompleteUpload()` - lock upload ID
-   - `ObjectService.PutObject()` - lock bucket+key during version update
-   - `BlobRepository.IncrementRefCount()` - lock content_hash
+**Changes**:
+- Added `locker lock.Locker` parameter to `ObjectService`, `MultipartService`, `GarbageCollector` constructors
+- `GarbageCollector.runWithContext()` acquires distributed lock before processing
+- `cmd/alexander-server/main.go` passes locker to all services (removed `_ = locker`)
+- Test files updated to use `lock.NewNoOpLocker()`
 
 ---
 
 ### 🟡 Medium Priority (Quality & Maintainability)
 
 #### TD-003: Redis Cache Interface Mismatch
-**Status**: ⚠️ Partial  
+**Status**: ✅ Already Correct (Verified 2025-01-06)  
 **Files**: `internal/cache/redis/cache.go`, `internal/repository/cache.go`  
-**Description**: Redis cache exists but may not implement the same `repository.Cache` interface as memory cache.
+**Description**: Both Redis and memory caches correctly implement the same `repository.Cache` interface.
 
-**Current State**:
-- `internal/cache/memory/cache.go` - Implements `repository.Cache` ✅
-- `internal/cache/redis/cache.go` - May have different interface ⚠️
-
-**Impact**: Cannot swap between Redis and memory cache seamlessly.
-
-**Solution**: Ensure both caches implement identical interface:
-```go
-type Cache interface {
-    Get(ctx context.Context, key string) ([]byte, error)
-    Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
-    Delete(ctx context.Context, key string) error
-    Exists(ctx context.Context, key string) (bool, error)
-}
-```
+**Verification**: Both caches implement `Get`, `Set`, `Delete`, `Exists` methods with identical signatures.
 
 ---
 
@@ -708,53 +670,51 @@ type Cache interface {
 ---
 
 #### TD-005: Duplicate SQLite Migration Files
-**Status**: ⚠️ Minor  
-**Files**: 
-- `migrations/sqlite/000001_init.up.sql`
-- `internal/repository/sqlite/migrations/000001_init.up.sql`
+**Status**: ✅ Completed (2025-01-06)  
+**Files**: `internal/repository/sqlite/migrations/` (kept)
 
-**Description**: Same migration exists in two locations. The embedded version in `internal/repository/sqlite/migrations/` is used at runtime.
+**Description**: Removed duplicate `migrations/sqlite/` directory. Only the embedded version in `internal/repository/sqlite/migrations/` remains.
 
-**Impact**: Confusion, potential drift if one is updated without the other.
-
-**Solution**: Remove `migrations/sqlite/` directory, keep only embedded migrations.
+**Action Taken**: Deleted `migrations/sqlite/000001_init.up.sql` and `migrations/sqlite/000001_init.down.sql`.
 
 ---
 
 ### 🟢 Low Priority (Future Optimization)
 
-#### TD-006: Multipart Concatenation I/O Overhead
-**Status**: 📋 Documented (Decision 6)  
+#### TD-006: Multipart Concatenation Bug (CRITICAL - NOW FIXED)
+**Status**: ✅ Completed (2025-01-06)  
 **Files**: `internal/service/multipart_service.go`  
-**Description**: `CompleteMultipartUpload` concatenates all parts into a single file. For large files (100GB+), this causes significant I/O.
+**Description**: Fixed critical bug where `CompleteMultipartUpload` only stored the first part's data.
 
-**Current Behavior**:
-1. Read all parts sequentially
-2. Write to single concatenated file
-3. Compute final hash
-4. Store as single blob
+**Previous Behavior (BUG)**:
+- Only used first part's content hash for final object
+- All other parts were ignored, causing data loss
 
-**Future Optimization** (Phase 10+):
-- Store composite blob reference (list of part hashes)
-- Stream parts on retrieval (no physical concatenation)
-- Deferred concatenation for cold storage tier
-
-**Trade-off**: More complex retrieval logic, but O(1) completion time.
+**Fixed Implementation**:
+- Added `concatenateParts(ctx, contentHashes, totalSize)` method
+- Uses `io.MultiReader` to stream all parts together efficiently
+- Computes correct combined SHA-256 hash
+- Registers combined blob and returns correct hash
+- Memory-efficient: streams data without loading all parts in memory
 
 ---
 
 #### TD-007: Admin CLI Completeness
-**Status**: 🔍 Needs Verification  
+**Status**: ✅ Completed (2025-01-06)  
 **Files**: `cmd/alexander-admin/main.go`  
-**Description**: Config examples reference admin commands that may not be fully implemented.
+**Description**: Full admin CLI implemented with all management commands.
 
-**Referenced Commands**:
-```bash
-./alexander-admin user create --username admin --email admin@example.com --admin
-./alexander-admin key create --username admin
-```
+**Implemented Commands**:
+- `user create|list|get|delete` - Full user management with JSON output option
+- `accesskey create|list|revoke` - Access key lifecycle management
+- `bucket list|delete|set-versioning` - Bucket administration
+- `gc run|status` - Manual garbage collection with dry-run support
 
-**Action**: Verify CLI implementation matches documentation.
+**Features**:
+- Confirmation prompts for destructive operations (`--force` to skip)
+- JSON output mode for scripting (`--json`)
+- Automatic password generation for user creation
+- Support for both PostgreSQL and SQLite backends
 
 ---
 
@@ -762,15 +722,15 @@ type Cache interface {
 
 | ID | Title | Priority | Status | Effort |
 |----|-------|----------|--------|--------|
-| TD-001 | Redis Distributed Lock | 🔴 High | Not Started | 4h |
-| TD-002 | Lock Integration | 🔴 High | Not Started | 8h |
-| TD-003 | Redis Cache Interface | 🟡 Medium | Partial | 2h |
-| TD-004 | Test Coverage | 🟡 Medium | Partial | 16h+ |
-| TD-005 | Duplicate Migrations | 🟡 Medium | Minor | 0.5h |
-| TD-006 | Multipart I/O | 🟢 Low | Documented | 16h+ |
-| TD-007 | Admin CLI | 🟢 Low | Needs Check | 2h |
+| TD-001 | Redis Distributed Lock | 🔴 High | ✅ Completed | 4h |
+| TD-002 | Lock Integration | 🔴 High | ✅ Completed | 8h |
+| TD-003 | Redis Cache Interface | 🟡 Medium | ✅ Verified OK | 0h |
+| TD-004 | Test Coverage | 🟡 Medium | ⚠️ Partial | 16h+ |
+| TD-005 | Duplicate Migrations | 🟡 Medium | ✅ Completed | 0.5h |
+| TD-006 | Multipart Concatenation Bug | 🔴 Critical | ✅ Fixed | 4h |
+| TD-007 | Admin CLI | 🟢 Low | ✅ Completed | 4h |
 
-**Total Estimated Effort**: ~48+ hours
+**Remaining Effort**: ~16+ hours (TD-004 Test Coverage)
 
 ---
 
@@ -778,7 +738,12 @@ type Cache interface {
 
 | Date | ID | Action | Notes |
 |------|-----|--------|-------|
-| - | - | - | No resolutions yet |
+| 2025-01-06 | TD-001 | Created `internal/lock/redis.go` | Adapter pattern wrapping `cache/redis.DistributedLock` |
+| 2025-01-06 | TD-002 | Integrated locker into services | Updated constructors for ObjectService, MultipartService, GCService |
+| 2025-01-06 | TD-003 | Verified interface compatibility | No changes needed - both caches implement same interface |
+| 2025-01-06 | TD-005 | Deleted `migrations/sqlite/` | Kept embedded migrations in `internal/repository/sqlite/migrations/` |
+| 2025-01-06 | TD-006 | Fixed multipart concatenation | Added `concatenateParts()` method using `io.MultiReader` |
+| 2025-01-06 | TD-007 | Implemented full admin CLI | User, accesskey, bucket, gc commands with JSON output |
 
 ---
 
