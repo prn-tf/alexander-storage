@@ -5,7 +5,7 @@ bin/
 *.dll
 *.so
 *.dylib
-MEMORY_BANK.md
+/MEMORY_BANK.md
 # Test binary, built with `go test -c`
 *.test
 .github\copilot-instructions.md

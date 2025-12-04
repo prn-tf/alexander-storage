@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/prn-tf/alexander-storage/internal/domain"
+	"github.com/prn-tf/alexander-storage/internal/lock"
 	"github.com/prn-tf/alexander-storage/internal/repository"
 	"github.com/prn-tf/alexander-storage/internal/storage"
 )
@@ -25,6 +26,7 @@ type MultipartService struct {
 	blobRepo      repository.BlobRepository
 	bucketRepo    repository.BucketRepository
 	storage       storage.Backend
+	locker        lock.Locker
 	logger        zerolog.Logger
 }
 
@@ -35,6 +37,7 @@ func NewMultipartService(
 	blobRepo repository.BlobRepository,
 	bucketRepo repository.BucketRepository,
 	storage storage.Backend,
+	locker lock.Locker,
 	logger zerolog.Logger,
 ) *MultipartService {
 	return &MultipartService{
@@ -43,6 +46,7 @@ func NewMultipartService(
 		blobRepo:      blobRepo,
 		bucketRepo:    bucketRepo,
 		storage:       storage,
+		locker:        locker,
 		logger:        logger.With().Str("service", "multipart").Logger(),
 	}
 }
@@ -404,6 +408,7 @@ func (s *MultipartService) CompleteMultipartUpload(ctx context.Context, input Co
 
 	var totalSize int64
 	etagParts := make([]string, len(input.Parts))
+	orderedContentHashes := make([]string, len(input.Parts))
 	for i, requestedPart := range input.Parts {
 		storedPart, exists := partMap[requestedPart.PartNumber]
 		if !exists {
@@ -415,16 +420,27 @@ func (s *MultipartService) CompleteMultipartUpload(ctx context.Context, input Co
 		totalSize += storedPart.Size
 		// Collect ETags for composite ETag calculation
 		etagParts[i] = storedPart.ETag
+		orderedContentHashes[i] = storedPart.ContentHash
 	}
-
-	// For simplicity, we use the first part's content hash as the final blob
-	// In a production system, you would concatenate the parts into a new blob
-	// For now, we'll create a composite reference
-	firstPart := partMap[input.Parts[0].PartNumber]
-	contentHash := firstPart.ContentHash
 
 	// Calculate composite ETag (MD5 of concatenated part MD5s + "-" + partCount)
 	compositeETag := calculateCompositeETag(etagParts)
+
+	// Concatenate all parts into a single blob
+	// Create a multi-reader that streams all parts sequentially
+	contentHash, err := s.concatenateParts(ctx, orderedContentHashes, totalSize)
+	if err != nil {
+		s.logger.Error().Err(err).Str("upload_id", input.UploadID).Msg("failed to concatenate parts")
+		return nil, fmt.Errorf("%w: %v", ErrInternalError, err)
+	}
+
+	// Register the new combined blob
+	storagePath := s.storage.GetPath(contentHash)
+	_, err = s.blobRepo.UpsertWithRefIncrement(ctx, contentHash, totalSize, storagePath)
+	if err != nil {
+		s.logger.Error().Err(err).Str("content_hash", contentHash).Msg("failed to upsert combined blob")
+		return nil, fmt.Errorf("%w: %v", ErrInternalError, err)
+	}
 
 	// Handle versioning for destination bucket
 	if bucket.IsVersioningEnabled() {
@@ -700,4 +716,41 @@ func calculateCompositeETag(partETags []string) string {
 		h.Write(data)
 	}
 	return fmt.Sprintf("\"%s-%d\"", hex.EncodeToString(h.Sum(nil)), len(partETags))
+}
+
+// concatenateParts concatenates multiple part blobs into a single new blob.
+// It reads each part sequentially and writes them to a new combined blob.
+// Returns the content hash of the combined blob.
+func (s *MultipartService) concatenateParts(ctx context.Context, contentHashes []string, totalSize int64) (string, error) {
+	// Create a multi-reader that streams all parts sequentially
+	readers := make([]io.Reader, 0, len(contentHashes))
+	closers := make([]io.Closer, 0, len(contentHashes))
+
+	// Ensure all readers are closed on exit
+	defer func() {
+		for _, c := range closers {
+			_ = c.Close()
+		}
+	}()
+
+	// Open readers for each part
+	for _, hash := range contentHashes {
+		reader, err := s.storage.Retrieve(ctx, hash)
+		if err != nil {
+			return "", fmt.Errorf("failed to retrieve part %s: %w", hash, err)
+		}
+		readers = append(readers, reader)
+		closers = append(closers, reader)
+	}
+
+	// Create a multi-reader that concatenates all parts
+	multiReader := io.MultiReader(readers...)
+
+	// Store the concatenated content
+	contentHash, err := s.storage.Store(ctx, multiReader, totalSize)
+	if err != nil {
+		return "", fmt.Errorf("failed to store concatenated blob: %w", err)
+	}
+
+	return contentHash, nil
 }

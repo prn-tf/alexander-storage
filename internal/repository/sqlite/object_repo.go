@@ -142,7 +142,7 @@ func (r *objectRepository) scanObject(row *sql.Row) (*domain.Object, error) {
 		obj.ContentHash = &contentHash.String
 	}
 	if etag.Valid {
-		obj.ETag = &etag.String
+		obj.ETag = etag.String
 	}
 	if metadataJSON != "" {
 		json.Unmarshal([]byte(metadataJSON), &obj.Metadata)

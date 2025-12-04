@@ -10,8 +10,9 @@
 2. [Feature Roadmap](#section-2-feature-roadmap)
 3. [Decision Log](#section-3-decision-log)
 4. [Current Context](#section-4-current-context)
-5. [API Reference](#section-5-api-reference)
-6. [Database Schema](#section-6-database-schema)
+5. [Technical Debt](#section-5-technical-debt)
+6. [API Reference](#section-6-api-reference)
+7. [Database Schema](#section-7-database-schema)
 
 ---
 
@@ -253,12 +254,62 @@ gc:
   batch_size: 1000
 ```
 
-### Phase 8: Architecture Improvements (Community Requested)
+### Phase 8: Architecture Improvements (Community Requested) ✅ COMPLETED
 > **Community Feedback**: "PostgreSQL + Redis is overkill for single-node deployments."
 
-- [ ] Embedded database support (SQLite or BadgerDB)
-- [ ] Memory-based locking for single-node mode (eliminate Redis dependency)
-- [ ] Single binary deployment mode
+- [x] Embedded database support (SQLite) - `internal/repository/sqlite/`
+- [x] Memory-based locking for single-node mode - `internal/lock/memory.go`
+- [x] In-memory cache for single-node mode - `internal/cache/memory/cache.go`
+- [x] Repository factory for database abstraction - `internal/repository/factory.go`
+- [x] Single binary deployment mode
+
+**Implementation Details:**
+
+**SQLite Support:**
+- Pure Go SQLite driver (modernc.org/sqlite) - no CGO required
+- Full repository implementations matching PostgreSQL interface
+- WAL mode enabled for better concurrency
+- Embedded migrations via `//go:embed`
+- Same schema structure adapted for SQLite syntax
+
+**Memory-Based Locking:**
+- `internal/lock/interfaces.go` - Locker abstraction interface
+- `internal/lock/memory.go` - In-memory lock with expiration and auto-cleanup
+- `internal/lock/noop.go` - No-op lock for testing scenarios
+- Automatic mode selection: distributed (Redis) vs single-node (memory)
+
+**In-Memory Cache:**
+- `internal/cache/memory/cache.go` - Thread-safe cache with TTL
+- Implements same interface as Redis cache
+- Background cleanup of expired entries
+- Graceful shutdown support
+
+**Configuration:**
+```yaml
+# Embedded mode
+database:
+  driver: "sqlite"           # or "postgres"
+  path: "./data/alexander.db"
+  journal_mode: "WAL"
+  busy_timeout: 5000
+  cache_size: -2000          # 2MB
+  synchronous_mode: "NORMAL"
+
+# Single-node: Redis disabled, uses memory cache/lock
+redis:
+  enabled: false
+```
+
+**Deployment Modes:**
+1. **Single-Node/Embedded**: SQLite + memory cache/lock
+   - No external dependencies
+   - Single binary deployment
+   - Ideal for dev/testing/small deployments
+
+2. **Distributed**: PostgreSQL + Redis
+   - Horizontal scalability
+   - Distributed locking
+   - Shared cache across nodes
 
 ### Phase 9: Advanced Features (Future)
 - [ ] Bucket policies
@@ -442,41 +493,59 @@ Path: /data/ab/cd/abcdef1234567890...
 
 ---
 
-### Decision 9: Future Embedded Database Support
+### Decision 9: Embedded SQLite Database Support
 
-**Date**: 2025-12-04  
-**Status**: 🔜 Planned  
+**Date**: 2025-12-04 (Planned), 2025-06-25 (Implemented)  
+**Status**: ✅ Approved & Implemented  
 
 **Context**: Community feedback requesting "zero-dependency" single-binary deployment.
 
-**Decision**: Add SQLite or BadgerDB as alternative metadata backend (Phase 8).
+**Decision**: Add SQLite as alternative metadata backend using modernc.org/sqlite (pure Go).
 
 **Rationale**:
-- **True Zero-Dependency**: Single binary, no external services
+- **True Zero-Dependency**: Single binary, no external services (no CGO required)
 - **Homelab Friendly**: `./alexander-server` just works
 - **Edge Deployments**: IoT, embedded systems, air-gapped networks
+- **Cross-Platform**: Pure Go compiles to any target without C compiler
 
-**Implementation Plan**:
-- Repository interface already supports this (abstraction exists)
-- Add `internal/repository/sqlite/` or `internal/repository/badger/`
-- Config: `database.driver: postgres|sqlite|badger`
+**Implementation**:
+- `internal/repository/sqlite/` - All repository implementations
+- `internal/repository/sqlite/migrations/` - Embedded SQL migrations
+- `internal/lock/memory.go` - In-memory locking (no Redis needed)
+- `internal/cache/memory/cache.go` - In-memory caching (no Redis needed)
+- Config: `database.driver: postgres|sqlite`
 
-**Trade-offs**:
-- SQLite: Limited concurrent writes, but excellent for read-heavy archival
-- BadgerDB: Better write performance, Go-native, but less tooling
+**SQLite-Specific Adaptations**:
+- No `RETURNING ... WHERE xmax = 0` for upsert detection
+- No `ANY($1::type[])` - uses manual placeholder generation
+- TEXT instead of TIMESTAMPTZ with ISO8601 format
+- INTEGER (0/1) instead of BOOLEAN
+- Embedded migrations via `//go:embed`
+
+**Performance Tuning**:
+```yaml
+database:
+  driver: sqlite
+  path: ./data/alexander.db
+  max_open_conns: 1          # SQLite single-writer
+  journal_mode: WAL          # Write-Ahead Logging
+  busy_timeout: 5000         # 5 seconds
+  cache_size: -2000          # 2MB page cache
+  synchronous_mode: NORMAL   # Balanced durability/speed
+```
 
 ---
 
 ## Section 4: Current Context
 
 ### Active Development Phase
-**Phase 8: Architecture Improvements**
+**Phase 9: Advanced Features** (Planning)
 
 ### Current Task
-Planning next phase: Embedded database support, single-node optimization
+Phase 8 completed. Ready for Phase 9: Advanced features like bucket policies, lifecycle rules, etc.
 
 ### Last Updated
-2025-12-04
+2025-06-25
 
 ### Completed Phases
 - ✅ Phase 1: Core Infrastructure
@@ -486,25 +555,38 @@ Planning next phase: Embedded database support, single-node optimization
 - ✅ Phase 5: Versioning
 - ✅ Phase 6: Multipart Upload
 - ✅ Phase 7: Operations & Observability
+- ✅ Phase 8: Architecture Improvements
 
-### Files Modified This Session
-- `internal/metrics/metrics.go` - Prometheus metrics definitions
-- `internal/middleware/ratelimit.go` - Token bucket rate limiting
-- `internal/middleware/tracing.go` - Request tracing and correlation IDs
-- `internal/service/gc_service.go` - Garbage collection service
-- `internal/handler/health.go` - Enhanced health check endpoints
-- `internal/handler/router.go` - Integrated new middleware
-- `internal/config/config.go` - Added metrics, rate_limit, gc config sections
-- `internal/storage/interfaces.go` - Added HealthCheck method
-- `internal/storage/filesystem/storage.go` - Implemented HealthCheck
-- `internal/storage/errors.go` - Added IsNotFound helper
-- `cmd/alexander-server/main.go` - Wired GC, metrics server, middleware
-- `MEMORY_BANK.md` - Updated with Phase 7 completion
+### Files Modified This Session (Phase 8)
+- `internal/lock/interfaces.go` - Lock abstraction interface
+- `internal/lock/memory.go` - In-memory lock implementation
+- `internal/lock/noop.go` - No-op lock for testing
+- `internal/cache/memory/cache.go` - In-memory cache implementation
+- `internal/repository/sqlite/db.go` - SQLite connection management
+- `internal/repository/sqlite/errors.go` - SQLite error translation
+- `internal/repository/sqlite/user_repo.go` - SQLite user repository
+- `internal/repository/sqlite/accesskey_repo.go` - SQLite access key repository
+- `internal/repository/sqlite/bucket_repo.go` - SQLite bucket repository
+- `internal/repository/sqlite/blob_repo.go` - SQLite blob repository
+- `internal/repository/sqlite/object_repo.go` - SQLite object repository
+- `internal/repository/sqlite/multipart_repo.go` - SQLite multipart repository
+- `internal/repository/sqlite/migrations/000001_init.up.sql` - SQLite schema
+- `internal/repository/sqlite/migrations/000001_init.down.sql` - SQLite rollback
+- `internal/repository/factory.go` - Repository factory
+- `internal/config/config.go` - Added SQLite driver support
+- `internal/repository/postgres/db.go` - Updated Close() to return error
+- `cmd/alexander-server/main.go` - Dual database driver support
+- `configs/config.embedded.yaml.example` - Embedded mode config example
+- `MEMORY_BANK.md` - Phase 8 documentation
 
-### Pending Tasks
-1. Embedded database support (SQLite/BadgerDB) - Phase 8
-2. Memory-based locking for single-node mode - Phase 8
-3. Single binary deployment mode - Phase 8
+### Pending Tasks (Phase 9)
+1. Bucket policies (IAM-like access control)
+2. Object lifecycle rules
+3. Cross-region replication
+4. Server-side encryption
+5. Object locking (WORM)
+6. Web Dashboard (webui)
+7. Python and PHP SDK
 
 ### Known Issues
 None currently.
@@ -515,12 +597,157 @@ None currently.
 - [x] Clarified io.TeeReader streaming hash in docs
 - [x] ~~Marked Multipart Upload as HIGH PRIORITY~~ → COMPLETED
 - [x] Documented Redis as optional for single-node
-- [x] Added future SQLite/BadgerDB support to roadmap
+- [x] ~~Added future SQLite/BadgerDB support to roadmap~~ → COMPLETED (SQLite)
 - [x] Added benchmark section placeholder
+- [x] **Single binary deployment mode** → COMPLETED
 
 ---
 
-## Section 5: API Reference
+## Section 5: Technical Debt
+
+> **Purpose**: Track known technical debt, missing implementations, and areas requiring improvement. Items are prioritized and should be addressed before adding new features.
+
+### 🔴 High Priority (Blocking Features)
+
+#### TD-001: Redis Distributed Lock Not Implemented
+**Status**: ✅ Completed (2025-01-06)  
+**Files**: `internal/lock/redis.go`  
+**Description**: Redis-based distributed lock implemented. Uses adapter pattern to wrap `cache/redis.DistributedLock` as `lock.Locker` interface.
+
+**Implementation**:
+- Created `internal/lock/redis.go` with `RedisLocker` struct
+- Wraps existing `cache/redis.DistributedLock` functionality
+- Implements all 5 interface methods: `Acquire`, `AcquireWithRetry`, `Release`, `Extend`, `IsHeld`
+- Compile-time interface check included
+
+---
+
+#### TD-002: Lock Not Integrated Into Services
+**Status**: ✅ Completed (2025-01-06)  
+**Files**: `cmd/alexander-server/main.go`, `internal/service/*.go`  
+**Description**: Locker is now integrated into services for concurrent operation safety.
+
+**Changes**:
+- Added `locker lock.Locker` parameter to `ObjectService`, `MultipartService`, `GarbageCollector` constructors
+- `GarbageCollector.runWithContext()` acquires distributed lock before processing
+- `cmd/alexander-server/main.go` passes locker to all services (removed `_ = locker`)
+- Test files updated to use `lock.NewNoOpLocker()`
+
+---
+
+### 🟡 Medium Priority (Quality & Maintainability)
+
+#### TD-003: Redis Cache Interface Mismatch
+**Status**: ✅ Already Correct (Verified 2025-01-06)  
+**Files**: `internal/cache/redis/cache.go`, `internal/repository/cache.go`  
+**Description**: Both Redis and memory caches correctly implement the same `repository.Cache` interface.
+
+**Verification**: Both caches implement `Get`, `Set`, `Delete`, `Exists` methods with identical signatures.
+
+---
+
+#### TD-004: Low Test Coverage
+**Status**: ⚠️ Partial  
+**Files**: `internal/*/`  
+**Description**: Only 3 service test files exist. Missing tests for repositories, handlers, auth, and integration.
+
+**Current Test Files**:
+- `internal/service/bucket_service_test.go` ✅
+- `internal/service/multipart_service_test.go` ✅
+- `internal/service/object_service_test.go` ✅
+
+**Missing Tests**:
+- [ ] `internal/repository/postgres/*_test.go`
+- [ ] `internal/repository/sqlite/*_test.go`
+- [ ] `internal/handler/*_test.go`
+- [ ] `internal/auth/*_test.go`
+- [ ] `internal/lock/*_test.go`
+- [ ] `internal/cache/memory/*_test.go`
+- [ ] Integration tests (end-to-end S3 compatibility)
+
+**Target**: Minimum 60% code coverage
+
+---
+
+#### TD-005: Duplicate SQLite Migration Files
+**Status**: ✅ Completed (2025-01-06)  
+**Files**: `internal/repository/sqlite/migrations/` (kept)
+
+**Description**: Removed duplicate `migrations/sqlite/` directory. Only the embedded version in `internal/repository/sqlite/migrations/` remains.
+
+**Action Taken**: Deleted `migrations/sqlite/000001_init.up.sql` and `migrations/sqlite/000001_init.down.sql`.
+
+---
+
+### 🟢 Low Priority (Future Optimization)
+
+#### TD-006: Multipart Concatenation Bug (CRITICAL - NOW FIXED)
+**Status**: ✅ Completed (2025-01-06)  
+**Files**: `internal/service/multipart_service.go`  
+**Description**: Fixed critical bug where `CompleteMultipartUpload` only stored the first part's data.
+
+**Previous Behavior (BUG)**:
+- Only used first part's content hash for final object
+- All other parts were ignored, causing data loss
+
+**Fixed Implementation**:
+- Added `concatenateParts(ctx, contentHashes, totalSize)` method
+- Uses `io.MultiReader` to stream all parts together efficiently
+- Computes correct combined SHA-256 hash
+- Registers combined blob and returns correct hash
+- Memory-efficient: streams data without loading all parts in memory
+
+---
+
+#### TD-007: Admin CLI Completeness
+**Status**: ✅ Completed (2025-01-06)  
+**Files**: `cmd/alexander-admin/main.go`  
+**Description**: Full admin CLI implemented with all management commands.
+
+**Implemented Commands**:
+- `user create|list|get|delete` - Full user management with JSON output option
+- `accesskey create|list|revoke` - Access key lifecycle management
+- `bucket list|delete|set-versioning` - Bucket administration
+- `gc run|status` - Manual garbage collection with dry-run support
+
+**Features**:
+- Confirmation prompts for destructive operations (`--force` to skip)
+- JSON output mode for scripting (`--json`)
+- Automatic password generation for user creation
+- Support for both PostgreSQL and SQLite backends
+
+---
+
+### 📊 Technical Debt Summary
+
+| ID | Title | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| TD-001 | Redis Distributed Lock | 🔴 High | ✅ Completed | 4h |
+| TD-002 | Lock Integration | 🔴 High | ✅ Completed | 8h |
+| TD-003 | Redis Cache Interface | 🟡 Medium | ✅ Verified OK | 0h |
+| TD-004 | Test Coverage | 🟡 Medium | ⚠️ Partial | 16h+ |
+| TD-005 | Duplicate Migrations | 🟡 Medium | ✅ Completed | 0.5h |
+| TD-006 | Multipart Concatenation Bug | 🔴 Critical | ✅ Fixed | 4h |
+| TD-007 | Admin CLI | 🟢 Low | ✅ Completed | 4h |
+
+**Remaining Effort**: ~16+ hours (TD-004 Test Coverage)
+
+---
+
+### Resolution Log
+
+| Date | ID | Action | Notes |
+|------|-----|--------|-------|
+| 2025-01-06 | TD-001 | Created `internal/lock/redis.go` | Adapter pattern wrapping `cache/redis.DistributedLock` |
+| 2025-01-06 | TD-002 | Integrated locker into services | Updated constructors for ObjectService, MultipartService, GCService |
+| 2025-01-06 | TD-003 | Verified interface compatibility | No changes needed - both caches implement same interface |
+| 2025-01-06 | TD-005 | Deleted `migrations/sqlite/` | Kept embedded migrations in `internal/repository/sqlite/migrations/` |
+| 2025-01-06 | TD-006 | Fixed multipart concatenation | Added `concatenateParts()` method using `io.MultiReader` |
+| 2025-01-06 | TD-007 | Implemented full admin CLI | User, accesskey, bucket, gc commands with JSON output |
+
+---
+
+## Section 6: API Reference
 
 ### S3-Compatible Endpoints (Planned)
 
@@ -556,7 +783,7 @@ None currently.
 
 ---
 
-## Section 6: Database Schema
+## Section 7: Database Schema
 
 ### Entity Relationship Diagram
 

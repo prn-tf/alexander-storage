@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/prn-tf/alexander-storage/internal/domain"
+	"github.com/prn-tf/alexander-storage/internal/lock"
 	"github.com/prn-tf/alexander-storage/internal/repository"
 	"github.com/prn-tf/alexander-storage/internal/storage"
 )
@@ -24,6 +25,7 @@ type ObjectService struct {
 	blobRepo   repository.BlobRepository
 	bucketRepo repository.BucketRepository
 	storage    storage.Backend
+	locker     lock.Locker
 	logger     zerolog.Logger
 }
 
@@ -33,6 +35,7 @@ func NewObjectService(
 	blobRepo repository.BlobRepository,
 	bucketRepo repository.BucketRepository,
 	storage storage.Backend,
+	locker lock.Locker,
 	logger zerolog.Logger,
 ) *ObjectService {
 	return &ObjectService{
@@ -40,6 +43,7 @@ func NewObjectService(
 		blobRepo:   blobRepo,
 		bucketRepo: bucketRepo,
 		storage:    storage,
+		locker:     locker,
 		logger:     logger.With().Str("service", "object").Logger(),
 	}
 }

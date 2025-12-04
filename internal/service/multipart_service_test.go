@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prn-tf/alexander-storage/internal/domain"
+	"github.com/prn-tf/alexander-storage/internal/lock"
 	"github.com/prn-tf/alexander-storage/internal/repository"
 )
 
@@ -112,9 +113,10 @@ func newTestMultipartService(t *testing.T) (*MultipartService, *mockMultipartRep
 	blobRepo := new(mockBlobRepository2)
 	bucketRepo := new(mockBucketRepository)
 	storage := new(mockStorageBackend2)
+	locker := lock.NewNoOpLocker()
 
 	logger := zerolog.Nop()
-	svc := NewMultipartService(multipartRepo, objectRepo, blobRepo, bucketRepo, storage, logger)
+	svc := NewMultipartService(multipartRepo, objectRepo, blobRepo, bucketRepo, storage, locker, logger)
 
 	return svc, multipartRepo, objectRepo, blobRepo, bucketRepo, storage
 }

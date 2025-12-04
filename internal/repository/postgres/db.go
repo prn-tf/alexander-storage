@@ -65,9 +65,10 @@ func NewDB(ctx context.Context, cfg config.DatabaseConfig, logger zerolog.Logger
 }
 
 // Close closes the database connection pool.
-func (db *DB) Close() {
+func (db *DB) Close() error {
 	db.Pool.Close()
 	db.logger.Info().Msg("database connection pool closed")
+	return nil
 }
 
 // Ping checks the database connection.

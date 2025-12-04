@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prn-tf/alexander-storage/internal/domain"
+	"github.com/prn-tf/alexander-storage/internal/lock"
 	"github.com/prn-tf/alexander-storage/internal/repository"
 )
 
@@ -291,9 +292,10 @@ func newTestObjectService() (*ObjectService, *mockObjectRepository, *mockBlobRep
 	blobRepo := new(mockBlobRepository2)
 	bucketRepo := new(mockBucketRepository)
 	storageBackend := new(mockStorageBackend2)
+	locker := lock.NewNoOpLocker()
 	logger := zerolog.Nop()
 
-	svc := NewObjectService(objectRepo, blobRepo, bucketRepo, storageBackend, logger)
+	svc := NewObjectService(objectRepo, blobRepo, bucketRepo, storageBackend, locker, logger)
 
 	return svc, objectRepo, blobRepo, bucketRepo, storageBackend
 }

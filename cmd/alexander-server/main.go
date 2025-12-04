@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,12 +16,16 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/prn-tf/alexander-storage/internal/auth"
+	"github.com/prn-tf/alexander-storage/internal/cache/memory"
 	"github.com/prn-tf/alexander-storage/internal/config"
 	"github.com/prn-tf/alexander-storage/internal/handler"
+	"github.com/prn-tf/alexander-storage/internal/lock"
 	"github.com/prn-tf/alexander-storage/internal/metrics"
 	"github.com/prn-tf/alexander-storage/internal/middleware"
 	"github.com/prn-tf/alexander-storage/internal/pkg/crypto"
+	"github.com/prn-tf/alexander-storage/internal/repository"
 	"github.com/prn-tf/alexander-storage/internal/repository/postgres"
+	"github.com/prn-tf/alexander-storage/internal/repository/sqlite"
 	"github.com/prn-tf/alexander-storage/internal/service"
 	"github.com/prn-tf/alexander-storage/internal/storage"
 	"github.com/prn-tf/alexander-storage/internal/storage/filesystem"
@@ -57,23 +62,95 @@ func main() {
 	}
 	zerolog.SetGlobalLevel(level)
 
-	// Initialize database connection
+	// Initialize database and repositories based on driver
 	ctx := context.Background()
-	db, err := postgres.NewDB(ctx, cfg.Database, log.Logger)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to connect to database")
+	var repos *repository.Repositories
+	var dbCloser func()
+	var dbHealth repository.DatabaseHealth
+
+	if cfg.Database.Driver == "sqlite" {
+		// SQLite / Embedded mode
+		log.Info().Str("driver", "sqlite").Str("path", cfg.Database.Path).Msg("Using embedded SQLite database")
+
+		// Ensure directory exists for SQLite database
+		if err := os.MkdirAll(filepath.Dir(cfg.Database.Path), 0755); err != nil {
+			log.Fatal().Err(err).Msg("Failed to create database directory")
+		}
+
+		sqliteDB, err := sqlite.NewDB(ctx, sqlite.Config{
+			Path:            cfg.Database.Path,
+			MaxOpenConns:    cfg.Database.MaxOpenConns,
+			MaxIdleConns:    cfg.Database.MaxIdleConns,
+			ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
+			JournalMode:     cfg.Database.JournalMode,
+			BusyTimeout:     cfg.Database.BusyTimeout,
+			CacheSize:       cfg.Database.CacheSize,
+			SynchronousMode: cfg.Database.SynchronousMode,
+		}, log.Logger)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to connect to SQLite database")
+		}
+		dbCloser = func() { sqliteDB.Close() }
+		dbHealth = sqliteDB
+
+		// Run migrations
+		if err := sqliteDB.Migrate(ctx); err != nil {
+			log.Fatal().Err(err).Msg("Failed to run SQLite migrations")
+		}
+
+		repos = &repository.Repositories{
+			User:      sqlite.NewUserRepository(sqliteDB),
+			AccessKey: sqlite.NewAccessKeyRepository(sqliteDB),
+			Bucket:    sqlite.NewBucketRepository(sqliteDB),
+			Object:    sqlite.NewObjectRepository(sqliteDB),
+			Blob:      sqlite.NewBlobRepository(sqliteDB),
+			Multipart: sqlite.NewMultipartRepository(sqliteDB),
+		}
+	} else {
+		// PostgreSQL mode (default)
+		log.Info().Str("driver", "postgres").Str("host", cfg.Database.Host).Msg("Using PostgreSQL database")
+
+		pgDB, err := postgres.NewDB(ctx, cfg.Database, log.Logger)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to connect to PostgreSQL database")
+		}
+		dbCloser = func() { pgDB.Close() }
+		dbHealth = pgDB
+
+		repos = &repository.Repositories{
+			User:      postgres.NewUserRepository(pgDB),
+			AccessKey: postgres.NewAccessKeyRepository(pgDB),
+			Bucket:    postgres.NewBucketRepository(pgDB),
+			Object:    postgres.NewObjectRepository(pgDB),
+			Blob:      postgres.NewBlobRepository(pgDB),
+			Multipart: postgres.NewMultipartRepository(pgDB),
+		}
 	}
-	defer db.Close()
+	defer dbCloser()
 
 	log.Info().Msg("Connected to database")
 
-	// Initialize repositories
-	userRepo := postgres.NewUserRepository(db)
-	accessKeyRepo := postgres.NewAccessKeyRepository(db)
-	bucketRepo := postgres.NewBucketRepository(db)
-	objectRepo := postgres.NewObjectRepository(db)
-	blobRepo := postgres.NewBlobRepository(db)
-	multipartRepo := postgres.NewMultipartRepository(db)
+	// Initialize cache and lock based on mode
+	var memCache *memory.Cache
+	var locker lock.Locker
+
+	if !cfg.Redis.Enabled || cfg.Database.IsEmbedded() {
+		// Single-node mode: use in-memory cache and locks
+		log.Info().Msg("Using in-memory cache and locks (single-node mode)")
+		memCache = memory.NewCache()
+		locker = lock.NewMemoryLocker()
+		defer memCache.Stop()
+	} else {
+		// Distributed mode: Redis would be used here
+		// For now, still use memory-based (Redis integration can be added)
+		log.Info().Msg("Redis enabled but using in-memory fallback")
+		memCache = memory.NewCache()
+		locker = lock.NewMemoryLocker()
+		defer memCache.Stop()
+	}
+
+	// Silence unused variable warning for cache (will be used for metadata caching in future)
+	_ = memCache
 
 	// Initialize encryptor
 	encryptionKey, err := cfg.Auth.GetEncryptionKey()
@@ -92,10 +169,10 @@ func main() {
 	}
 
 	// Initialize services
-	iamService := service.NewIAMService(accessKeyRepo, userRepo, encryptor, log.Logger)
-	bucketService := service.NewBucketService(bucketRepo, log.Logger)
-	objectService := service.NewObjectService(objectRepo, blobRepo, bucketRepo, storageBackend, log.Logger)
-	multipartService := service.NewMultipartService(multipartRepo, objectRepo, blobRepo, bucketRepo, storageBackend, log.Logger)
+	iamService := service.NewIAMService(repos.AccessKey, repos.User, encryptor, log.Logger)
+	bucketService := service.NewBucketService(repos.Bucket, log.Logger)
+	objectService := service.NewObjectService(repos.Object, repos.Blob, repos.Bucket, storageBackend, locker, log.Logger)
+	multipartService := service.NewMultipartService(repos.Multipart, repos.Object, repos.Blob, repos.Bucket, storageBackend, locker, log.Logger)
 
 	// Initialize metrics
 	var m *metrics.Metrics
@@ -108,8 +185,9 @@ func main() {
 	var gc *service.GarbageCollector
 	if cfg.GC.Enabled {
 		gc = service.NewGarbageCollector(
-			blobRepo,
+			repos.Blob,
 			storageBackend,
+			locker,
 			m,
 			log.Logger,
 			service.GCConfig{
@@ -168,7 +246,7 @@ func main() {
 
 	// Initialize health checker
 	healthChecker := handler.NewHealthChecker(handler.HealthCheckerConfig{
-		DatabaseChecker: db,
+		DatabaseChecker: dbHealth,
 		StorageBackend:  storageBackend,
 		Logger:          log.Logger,
 		CacheTTL:        5 * time.Second,

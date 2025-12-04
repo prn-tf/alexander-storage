@@ -34,8 +34,14 @@ type ServerConfig struct {
 	MaxBodySize     int64         `mapstructure:"max_body_size"`
 }
 
-// DatabaseConfig holds PostgreSQL connection settings.
+// DatabaseConfig holds database connection settings.
+// Supports both PostgreSQL and SQLite backends.
 type DatabaseConfig struct {
+	// Driver specifies the database driver: "postgres" or "sqlite".
+	// Default is "postgres" for backward compatibility.
+	Driver string `mapstructure:"driver"`
+
+	// PostgreSQL settings (used when Driver is "postgres")
 	Host            string        `mapstructure:"host"`
 	Port            int           `mapstructure:"port"`
 	User            string        `mapstructure:"user"`
@@ -46,14 +52,27 @@ type DatabaseConfig struct {
 	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
 	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"`
+
+	// SQLite settings (used when Driver is "sqlite")
+	Path            string `mapstructure:"path"`             // Path to SQLite database file
+	JournalMode     string `mapstructure:"journal_mode"`     // WAL, DELETE, TRUNCATE, etc.
+	BusyTimeout     int    `mapstructure:"busy_timeout"`     // Milliseconds to wait for locks
+	CacheSize       int    `mapstructure:"cache_size"`       // Page cache size (negative = KB)
+	SynchronousMode string `mapstructure:"synchronous_mode"` // NORMAL, FULL, OFF
 }
 
 // DSN returns the PostgreSQL connection string.
+// Only valid when Driver is "postgres".
 func (c DatabaseConfig) DSN() string {
 	return fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		c.Host, c.Port, c.User, c.Password, c.Database, c.SSLMode,
 	)
+}
+
+// IsEmbedded returns true if using an embedded database (SQLite).
+func (c DatabaseConfig) IsEmbedded() bool {
+	return c.Driver == "sqlite"
 }
 
 // RedisConfig holds Redis connection settings.
@@ -242,6 +261,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.max_body_size", 5*1024*1024*1024) // 5GB
 
 	// Database defaults
+	v.SetDefault("database.driver", "postgres")
 	v.SetDefault("database.host", "localhost")
 	v.SetDefault("database.port", 5432)
 	v.SetDefault("database.user", "alexander")
@@ -252,6 +272,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.max_idle_conns", 5)
 	v.SetDefault("database.conn_max_lifetime", 5*time.Minute)
 	v.SetDefault("database.conn_max_idle_time", 5*time.Minute)
+	// SQLite defaults
+	v.SetDefault("database.path", "./data/alexander.db")
+	v.SetDefault("database.journal_mode", "WAL")
+	v.SetDefault("database.busy_timeout", 5000)
+	v.SetDefault("database.cache_size", -2000)
+	v.SetDefault("database.synchronous_mode", "NORMAL")
 
 	// Redis defaults
 	v.SetDefault("redis.host", "localhost")
@@ -312,14 +338,25 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate database configuration
-	if c.Database.Host == "" {
-		return fmt.Errorf("database.host is required")
+	validDrivers := map[string]bool{"postgres": true, "sqlite": true}
+	if !validDrivers[c.Database.Driver] {
+		return fmt.Errorf("database.driver must be 'postgres' or 'sqlite'")
 	}
-	if c.Database.User == "" {
-		return fmt.Errorf("database.user is required")
-	}
-	if c.Database.Database == "" {
-		return fmt.Errorf("database.database is required")
+
+	if c.Database.Driver == "postgres" {
+		if c.Database.Host == "" {
+			return fmt.Errorf("database.host is required for postgres driver")
+		}
+		if c.Database.User == "" {
+			return fmt.Errorf("database.user is required for postgres driver")
+		}
+		if c.Database.Database == "" {
+			return fmt.Errorf("database.database is required for postgres driver")
+		}
+	} else if c.Database.Driver == "sqlite" {
+		if c.Database.Path == "" {
+			return fmt.Errorf("database.path is required for sqlite driver")
+		}
 	}
 
 	// Validate storage configuration

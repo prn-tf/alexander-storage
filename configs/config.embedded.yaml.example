@@ -1,0 +1,146 @@
+# Alexander Storage Configuration - Embedded/Single-Node Mode
+# 
+# This configuration is optimized for single-node deployments where you want:
+# - SQLite database (no PostgreSQL required)
+# - In-memory caching and locking (no Redis required)
+# - Single binary deployment
+#
+# Copy this file to config.yaml and update values as needed.
+# Environment variables can override any setting with ALEXANDER_ prefix.
+# Example: ALEXANDER_DATABASE_PATH=/var/lib/alexander/data.db
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 60s
+  idle_timeout: 120s
+  max_header_bytes: 1048576  # 1MB
+  shutdown_timeout: 30s
+
+# TLS configuration (recommended for production)
+tls:
+  enabled: false
+  cert_file: ""
+  key_file: ""
+  port: 8443
+
+# SQLite embedded database
+database:
+  # Driver: "sqlite" for embedded mode, "postgres" for distributed mode
+  driver: "sqlite"
+  
+  # SQLite database file path (relative to working directory or absolute)
+  path: "./data/alexander.db"
+  
+  # SQLite-specific settings (optimal for single-writer scenarios)
+  max_open_conns: 1        # SQLite works best with single writer
+  max_idle_conns: 1
+  conn_max_lifetime: 1h
+  
+  # SQLite performance tuning
+  journal_mode: "WAL"      # Write-Ahead Logging for better concurrency
+  busy_timeout: 5000       # 5 seconds before SQLITE_BUSY
+  cache_size: -2000        # 2MB page cache (negative = KB)
+  synchronous_mode: "NORMAL"  # NORMAL, FULL, OFF
+
+# Redis is disabled in embedded mode
+# In-memory cache and locks will be used automatically
+redis:
+  enabled: false
+
+# Storage backend configuration
+storage:
+  # Backend type: "filesystem"
+  backend: "filesystem"
+  
+  # Data directory for object storage
+  data_dir: "./data/objects"
+  
+  # Temporary directory for uploads
+  temp_dir: "./data/temp"
+
+# Authentication and security
+auth:
+  # Master key for encrypting secret keys (AES-256)
+  # REQUIRED: Generate with: openssl rand -hex 32
+  # Set via environment: ALEXANDER_AUTH_ENCRYPTION_KEY
+  encryption_key: ""
+  
+  # Default region for AWS v4 signature
+  region: "us-east-1"
+  
+  # Service name for signature
+  service: "s3"
+
+# Multipart upload settings
+multipart:
+  # Maximum part size (5GB S3 limit)
+  max_part_size: 5368709120
+  # Minimum part size (5MB S3 limit, except last part)
+  min_part_size: 5242880
+  # Maximum number of parts
+  max_parts: 10000
+  # Upload expiration (cleanup incomplete uploads)
+  expiration: 168h  # 7 days
+
+# Garbage collection for orphan blobs
+gc:
+  enabled: true
+  interval: 1h
+  # Grace period before deleting orphan blobs
+  grace_period: 24h
+  # Number of blobs to process per run
+  batch_size: 1000
+  # Dry run mode (log without deleting)
+  dry_run: false
+
+# Logging
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "console"  # json, console (console is more readable for single-node)
+
+# Metrics (Prometheus)
+metrics:
+  enabled: true
+  port: 9091
+  path: "/metrics"
+
+# Rate limiting (optional for single-node)
+rate_limit:
+  enabled: true
+  # Requests per second per client
+  requests_per_second: 100
+  # Burst capacity
+  burst_size: 200
+
+# =============================================================================
+# QUICK START - Embedded Mode
+# =============================================================================
+#
+# 1. Generate encryption key:
+#    openssl rand -hex 32
+#
+# 2. Set environment variable:
+#    export ALEXANDER_AUTH_ENCRYPTION_KEY=your_generated_key
+#
+# 3. Create data directories:
+#    mkdir -p ./data/objects ./data/temp
+#
+# 4. Start the server:
+#    ./alexander-server
+#
+# 5. Create admin user:
+#    ./alexander-admin user create --username admin --email admin@example.com --admin
+#
+# 6. Create access key:
+#    ./alexander-admin key create --username admin
+#
+# 7. Configure AWS CLI:
+#    aws configure --profile alexander
+#    # Enter access key and secret from step 6
+#    # Region: us-east-1
+#
+# 8. Test connection:
+#    aws --endpoint-url http://localhost:8080 --profile alexander s3 ls
+#

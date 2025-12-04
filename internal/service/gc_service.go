@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/prn-tf/alexander-storage/internal/lock"
 	"github.com/prn-tf/alexander-storage/internal/metrics"
 	"github.com/prn-tf/alexander-storage/internal/repository"
 	"github.com/prn-tf/alexander-storage/internal/storage"
@@ -17,6 +18,7 @@ import (
 type GarbageCollector struct {
 	blobRepo repository.BlobRepository
 	storage  storage.Backend
+	locker   lock.Locker
 	metrics  *metrics.Metrics
 	logger   zerolog.Logger
 	config   GCConfig
@@ -62,6 +64,7 @@ func DefaultGCConfig() GCConfig {
 func NewGarbageCollector(
 	blobRepo repository.BlobRepository,
 	storage storage.Backend,
+	locker lock.Locker,
 	m *metrics.Metrics,
 	logger zerolog.Logger,
 	config GCConfig,
@@ -69,6 +72,7 @@ func NewGarbageCollector(
 	return &GarbageCollector{
 		blobRepo: blobRepo,
 		storage:  storage,
+		locker:   locker,
 		metrics:  m,
 		logger:   logger.With().Str("service", "gc").Logger(),
 		config:   config,
@@ -169,6 +173,31 @@ func (gc *GarbageCollector) runWithContext(ctx context.Context) GCResult {
 	result := GCResult{}
 
 	gc.logger.Debug().Msg("Starting garbage collection run")
+
+	// Acquire distributed lock to prevent concurrent GC runs
+	lockKey := lock.Keys.BlobGC()
+	lockTTL := gc.config.Interval / 2 // Lock expires before next scheduled run
+	if lockTTL < 5*time.Minute {
+		lockTTL = 5 * time.Minute
+	}
+
+	acquired, err := gc.locker.Acquire(ctx, lockKey, lockTTL)
+	if err != nil {
+		gc.logger.Error().Err(err).Msg("Failed to acquire GC lock")
+		result.Errors++
+		result.Duration = time.Since(start)
+		return result
+	}
+	if !acquired {
+		gc.logger.Debug().Msg("GC lock held by another process, skipping run")
+		result.Duration = time.Since(start)
+		return result
+	}
+	defer func() {
+		if _, err := gc.locker.Release(ctx, lockKey); err != nil {
+			gc.logger.Error().Err(err).Msg("Failed to release GC lock")
+		}
+	}()
 
 	// Get orphan blobs
 	orphans, err := gc.blobRepo.ListOrphans(ctx, gc.config.GracePeriod, gc.config.BatchSize)
