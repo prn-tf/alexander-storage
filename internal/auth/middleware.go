@@ -4,6 +4,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -17,6 +18,13 @@ type AccessKeyStore interface {
 
 	// UpdateLastUsed updates the last used timestamp for an access key.
 	UpdateLastUsed(ctx context.Context, accessKeyID string) error
+}
+
+// BucketACLChecker defines the interface for checking bucket ACL permissions.
+type BucketACLChecker interface {
+	// GetBucketACL returns the ACL for a bucket by name.
+	// Returns empty string if bucket not found.
+	GetBucketACL(ctx context.Context, bucketName string) (string, error)
 }
 
 // AccessKeyInfo contains the information needed for signature verification.
@@ -53,16 +61,36 @@ type Config struct {
 
 	// SkipPaths are paths that skip authentication.
 	SkipPaths []string
+
+	// BucketACLChecker checks bucket ACL for anonymous access (optional).
+	BucketACLChecker BucketACLChecker
 }
 
 // DefaultConfig returns the default auth configuration.
 func DefaultConfig() Config {
 	return Config{
-		Region:         DefaultRegion,
-		Service:        ServiceS3,
-		AllowAnonymous: false,
-		SkipPaths:      []string{"/health", "/metrics"},
+		Region:           DefaultRegion,
+		Service:          ServiceS3,
+		AllowAnonymous:   false,
+		SkipPaths:        []string{"/health", "/metrics"},
+		BucketACLChecker: nil,
 	}
+}
+
+// extractBucketName extracts the bucket name from the URL path.
+// S3-style path: /bucket-name/key or /bucket-name
+func extractBucketName(path string) string {
+	path = strings.TrimPrefix(path, "/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+	return ""
+}
+
+// isReadOperation checks if the HTTP method is a read operation.
+func isReadOperation(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
 }
 
 // Middleware creates an authentication middleware.
@@ -82,11 +110,34 @@ func Middleware(store AccessKeyStore, config Config) func(http.Handler) http.Han
 
 			switch authType {
 			case AuthTypeAnonymous:
-				if !config.AllowAnonymous {
-					writeAuthError(w, ErrAccessDenied)
+				// Check if anonymous access is allowed
+				if config.AllowAnonymous {
+					next.ServeHTTP(w, r)
 					return
 				}
-				next.ServeHTTP(w, r)
+
+				// Check bucket ACL for anonymous access
+				if config.BucketACLChecker != nil {
+					bucketName := extractBucketName(r.URL.Path)
+					if bucketName != "" {
+						acl, err := config.BucketACLChecker.GetBucketACL(r.Context(), bucketName)
+						if err == nil && acl != "" {
+							// Check if ACL allows anonymous access for this operation
+							if isReadOperation(r.Method) && (acl == "public-read" || acl == "public-read-write") {
+								// Allow read operations on public-read buckets
+								next.ServeHTTP(w, r)
+								return
+							}
+							if acl == "public-read-write" {
+								// Allow all operations on public-read-write buckets
+								next.ServeHTTP(w, r)
+								return
+							}
+						}
+					}
+				}
+
+				writeAuthError(w, ErrAccessDenied)
 				return
 
 			case AuthTypeSignedV4:

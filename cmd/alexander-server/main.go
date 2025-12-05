@@ -231,11 +231,13 @@ func main() {
 
 	// Initialize auth middleware
 	accessKeyStore := service.NewAccessKeyStoreAdapter(iamService)
+	bucketACLChecker := service.NewBucketACLAdapter(bucketService)
 	authConfig := auth.Config{
-		Region:         cfg.Auth.Region,
-		Service:        cfg.Auth.Service,
-		AllowAnonymous: false,
-		SkipPaths:      []string{"/health", "/healthz", "/readyz"},
+		Region:           cfg.Auth.Region,
+		Service:          cfg.Auth.Service,
+		AllowAnonymous:   false,
+		SkipPaths:        []string{"/health", "/healthz", "/readyz"},
+		BucketACLChecker: bucketACLChecker,
 	}
 	authMiddleware := handler.CreateAuthMiddleware(accessKeyStore, authConfig)
 

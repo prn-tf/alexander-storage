@@ -124,6 +124,10 @@ type AuthConfig struct {
 	// Must be exactly 32 bytes (256 bits) for AES-256.
 	EncryptionKey string `mapstructure:"encryption_key"`
 
+	// SSEMasterKey is the hex-encoded 32-byte master key for SSE-S3 encryption.
+	// Used with HKDF to derive per-blob encryption keys.
+	SSEMasterKey string `mapstructure:"sse_master_key"`
+
 	// Region is the default region for AWS v4 signature verification.
 	Region string `mapstructure:"region"`
 

@@ -128,6 +128,23 @@ func (m *MockBucketRepository) IsEmpty(ctx context.Context, id int64) (bool, err
 	return count == 0, nil
 }
 
+func (m *MockBucketRepository) GetACLByName(ctx context.Context, name string) (domain.BucketACL, error) {
+	if b, exists := m.buckets[name]; exists {
+		return b.ACL, nil
+	}
+	return "", domain.ErrBucketNotFound
+}
+
+func (m *MockBucketRepository) UpdateACL(ctx context.Context, id int64, acl domain.BucketACL) error {
+	for _, b := range m.buckets {
+		if b.ID == id {
+			b.ACL = acl
+			return nil
+		}
+	}
+	return domain.ErrBucketNotFound
+}
+
 // Helper to add objects to a bucket for testing
 func (m *MockBucketRepository) AddObjects(bucketID int64, count int64) {
 	m.objects[bucketID] = count

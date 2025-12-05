@@ -45,6 +45,26 @@ func (r *blobRepository) UpsertWithRefIncrement(ctx context.Context, contentHash
 	return isNew, nil
 }
 
+// UpsertEncrypted creates a new encrypted blob or increments ref_count if it exists.
+// Returns (isNew, error) where isNew indicates if a new blob was created.
+func (r *blobRepository) UpsertEncrypted(ctx context.Context, contentHash string, size int64, storagePath string, encryptionIV string) (bool, error) {
+	query := `
+		INSERT INTO blobs (content_hash, size, storage_path, ref_count, is_encrypted, encryption_iv, created_at)
+		VALUES ($1, $2, $3, 1, true, $4, $5)
+		ON CONFLICT (content_hash) DO UPDATE
+		SET ref_count = blobs.ref_count + 1
+		RETURNING (xmax = 0) AS is_new
+	`
+
+	var isNew bool
+	err := r.db.Pool.QueryRow(ctx, query, contentHash, size, storagePath, encryptionIV, time.Now().UTC()).Scan(&isNew)
+	if err != nil {
+		return false, fmt.Errorf("failed to upsert encrypted blob: %w", err)
+	}
+
+	return isNew, nil
+}
+
 // GetByHash retrieves a blob by its content hash (primary key).
 func (r *blobRepository) GetByHash(ctx context.Context, contentHash string) (*domain.Blob, error) {
 	query := `
@@ -240,11 +260,11 @@ func (r *blobRepository) UpdateLastAccessed(ctx context.Context, contentHash str
 	return nil
 }
 
-// UpdateEncrypted marks a blob as encrypted (SSE-S3 migration).
-func (r *blobRepository) UpdateEncrypted(ctx context.Context, contentHash string, encrypted bool) error {
-	query := `UPDATE blobs SET is_encrypted = $2 WHERE content_hash = $1`
+// UpdateEncrypted marks a blob as encrypted with the given IV (SSE-S3 migration).
+func (r *blobRepository) UpdateEncrypted(ctx context.Context, contentHash string, encryptionIV string) error {
+	query := `UPDATE blobs SET is_encrypted = true, encryption_iv = $2 WHERE content_hash = $1`
 
-	result, err := r.db.Pool.Exec(ctx, query, contentHash, encrypted)
+	result, err := r.db.Pool.Exec(ctx, query, contentHash, encryptionIV)
 	if err != nil {
 		return fmt.Errorf("failed to update encrypted flag: %w", err)
 	}
@@ -308,6 +328,27 @@ func (r *blobRepository) IsEncrypted(ctx context.Context, contentHash string) (b
 		return false, fmt.Errorf("failed to check encryption status: %w", err)
 	}
 	return isEncrypted, nil
+}
+
+// GetEncryptionStatus returns the encryption status and IV for a blob.
+func (r *blobRepository) GetEncryptionStatus(ctx context.Context, contentHash string) (isEncrypted bool, encryptionIV string, err error) {
+	var iv *string
+
+	err = r.db.Pool.QueryRow(ctx,
+		`SELECT is_encrypted, encryption_iv FROM blobs WHERE content_hash = $1`,
+		contentHash,
+	).Scan(&isEncrypted, &iv)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, "", domain.ErrBlobNotFound
+		}
+		return false, "", fmt.Errorf("failed to get encryption status: %w", err)
+	}
+
+	if iv != nil {
+		encryptionIV = *iv
+	}
+	return isEncrypted, encryptionIV, nil
 }
 
 // Ensure blobRepository implements repository.BlobRepository

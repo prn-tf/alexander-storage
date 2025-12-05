@@ -1,0 +1,53 @@
+{{define "login.html"}}
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="h-full">
+    <div class="flex min-h-full flex-col justify-center px-6 py-12 lg:px-8">
+        <div class="sm:mx-auto sm:w-full sm:max-w-sm">
+            <h1 class="text-center text-3xl font-bold text-gray-900">Alexander Storage</h1>
+            <h2 class="mt-4 text-center text-xl text-gray-600">Sign in to your account</h2>
+        </div>
+
+        <div class="mt-10 sm:mx-auto sm:w-full sm:max-w-sm">
+            {{if .Error}}
+            <div class="mb-4 rounded-md bg-red-50 p-4">
+                <div class="text-sm text-red-700">{{.Error}}</div>
+            </div>
+            {{end}}
+
+            <form hx-post="/dashboard/login" hx-swap="innerHTML" hx-target="body" class="space-y-6">
+                <div>
+                    <label for="username" class="block text-sm font-medium leading-6 text-gray-900">Username</label>
+                    <div class="mt-2">
+                        <input id="username" name="username" type="text" autocomplete="username" required 
+                            class="block w-full rounded-md border-0 py-1.5 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6">
+                    </div>
+                </div>
+
+                <div>
+                    <label for="password" class="block text-sm font-medium leading-6 text-gray-900">Password</label>
+                    <div class="mt-2">
+                        <input id="password" name="password" type="password" autocomplete="current-password" required 
+                            class="block w-full rounded-md border-0 py-1.5 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6">
+                    </div>
+                </div>
+
+                <div>
+                    <button type="submit" 
+                        class="flex w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">
+                        Sign in
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

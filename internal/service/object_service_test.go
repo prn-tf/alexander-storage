@@ -104,6 +104,14 @@ func (m *mockObjectRepository) GetContentHashForVersion(ctx context.Context, buc
 	return args.Get(0).(*string), args.Error(1)
 }
 
+func (m *mockObjectRepository) ListExpiredObjects(ctx context.Context, bucketID int64, prefix string, olderThan time.Time, limit int) ([]*domain.Object, error) {
+	args := m.Called(ctx, bucketID, prefix, olderThan, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Object), args.Error(1)
+}
+
 type mockBlobRepository2 struct {
 	mock.Mock
 }
@@ -165,6 +173,34 @@ func (m *mockBlobRepository2) DeleteOrphans(ctx context.Context, gracePeriod tim
 func (m *mockBlobRepository2) UpdateLastAccessed(ctx context.Context, contentHash string) error {
 	args := m.Called(ctx, contentHash)
 	return args.Error(0)
+}
+
+func (m *mockBlobRepository2) GetEncryptionStatus(ctx context.Context, contentHash string) (bool, string, error) {
+	args := m.Called(ctx, contentHash)
+	return args.Bool(0), args.String(1), args.Error(2)
+}
+
+func (m *mockBlobRepository2) UpsertEncrypted(ctx context.Context, contentHash string, size int64, storagePath string, encryptionIV string) (bool, error) {
+	args := m.Called(ctx, contentHash, size, storagePath, encryptionIV)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockBlobRepository2) UpdateEncrypted(ctx context.Context, contentHash string, encryptionIV string) error {
+	args := m.Called(ctx, contentHash, encryptionIV)
+	return args.Error(0)
+}
+
+func (m *mockBlobRepository2) IsEncrypted(ctx context.Context, contentHash string) (bool, error) {
+	args := m.Called(ctx, contentHash)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockBlobRepository2) ListUnencrypted(ctx context.Context, limit int) ([]*domain.Blob, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Blob), args.Error(1)
 }
 
 type mockStorageBackend2 struct {
@@ -280,6 +316,16 @@ func (m *mockBucketRepository) IsEmpty(ctx context.Context, id int64) (bool, err
 
 func (m *mockBucketRepository) UpdateVersioning(ctx context.Context, id int64, status domain.VersioningStatus) error {
 	args := m.Called(ctx, id, status)
+	return args.Error(0)
+}
+
+func (m *mockBucketRepository) GetACLByName(ctx context.Context, name string) (domain.BucketACL, error) {
+	args := m.Called(ctx, name)
+	return args.Get(0).(domain.BucketACL), args.Error(1)
+}
+
+func (m *mockBucketRepository) UpdateACL(ctx context.Context, id int64, acl domain.BucketACL) error {
+	args := m.Called(ctx, id, acl)
 	return args.Error(0)
 }
 

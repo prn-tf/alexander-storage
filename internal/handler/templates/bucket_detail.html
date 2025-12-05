@@ -1,0 +1,141 @@
+{{define "bucket_detail.html"}}
+{{template "base" .}}
+{{end}}
+
+{{define "content"}}
+<div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <!-- Bucket Header -->
+    <div class="sm:flex sm:items-center sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-semibold leading-6 text-gray-900">{{.Bucket.Name}}</h1>
+            <p class="mt-2 text-sm text-gray-500">Region: {{.Bucket.Region}} | Created: {{.Bucket.CreatedAt.Format "Jan 02, 2006 15:04"}}</p>
+        </div>
+        <a href="/dashboard" class="mt-4 sm:mt-0 text-sm text-indigo-600 hover:text-indigo-900">← Back to Dashboard</a>
+    </div>
+
+    <!-- ACL Section -->
+    <div class="mt-8 bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-base font-semibold leading-6 text-gray-900">Access Control</h3>
+            <div class="mt-2 max-w-xl text-sm text-gray-500">
+                <p>Control who can access this bucket and its objects.</p>
+            </div>
+            <form hx-post="/dashboard/buckets/{{.Bucket.Name}}/acl" hx-swap="none" class="mt-5 sm:flex sm:items-center">
+                <select name="acl" class="block w-full rounded-md border-0 py-1.5 pl-3 pr-10 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-indigo-600 sm:text-sm sm:leading-6 sm:w-auto">
+                    <option value="private" {{if eq .Bucket.ACL "private"}}selected{{end}}>Private</option>
+                    <option value="public-read" {{if eq .Bucket.ACL "public-read"}}selected{{end}}>Public Read</option>
+                    <option value="public-read-write" {{if eq .Bucket.ACL "public-read-write"}}selected{{end}}>Public Read/Write</option>
+                </select>
+                <button type="submit" class="mt-3 inline-flex w-full items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 sm:ml-3 sm:mt-0 sm:w-auto">
+                    Update ACL
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Versioning Section -->
+    <div class="mt-6 bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-base font-semibold leading-6 text-gray-900">Versioning</h3>
+            <div class="mt-2 text-sm text-gray-500">
+                <p>Current status: 
+                    {{if eq .Bucket.Versioning "Enabled"}}
+                    <span class="inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">Enabled</span>
+                    {{else if eq .Bucket.Versioning "Suspended"}}
+                    <span class="inline-flex items-center rounded-md bg-yellow-50 px-2 py-1 text-xs font-medium text-yellow-800 ring-1 ring-inset ring-yellow-600/20">Suspended</span>
+                    {{else}}
+                    <span class="inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">Disabled</span>
+                    {{end}}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lifecycle Rules Section -->
+    <div class="mt-6 bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+            <h3 class="text-base font-semibold leading-6 text-gray-900">Lifecycle Rules</h3>
+            <div class="mt-2 max-w-xl text-sm text-gray-500">
+                <p>Automatically expire objects after a certain number of days.</p>
+            </div>
+
+            <!-- Existing Rules -->
+            {{if .LifecycleRules}}
+            <div class="mt-4">
+                <table class="min-w-full divide-y divide-gray-300">
+                    <thead>
+                        <tr>
+                            <th scope="col" class="py-3.5 text-left text-sm font-semibold text-gray-900">Rule ID</th>
+                            <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Prefix</th>
+                            <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Expiration (Days)</th>
+                            <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
+                            <th scope="col" class="relative py-3.5 pl-3 pr-4">
+                                <span class="sr-only">Actions</span>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200">
+                        {{range .LifecycleRules}}
+                        <tr>
+                            <td class="whitespace-nowrap py-4 text-sm font-medium text-gray-900">{{.RuleID}}</td>
+                            <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{if .Prefix}}{{.Prefix}}{{else}}<em>All objects</em>{{end}}</td>
+                            <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{if .ExpirationDays}}{{.ExpirationDays}}{{else}}-{{end}}</td>
+                            <td class="whitespace-nowrap px-3 py-4 text-sm">
+                                {{if eq .Status "Enabled"}}
+                                <span class="inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">Enabled</span>
+                                {{else}}
+                                <span class="inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">Disabled</span>
+                                {{end}}
+                            </td>
+                            <td class="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium">
+                                <button hx-delete="/dashboard/buckets/{{$.Bucket.Name}}/lifecycle/{{.RuleID}}" hx-swap="none" hx-confirm="Are you sure you want to delete this rule?" class="text-red-600 hover:text-red-900">Delete</button>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{end}}
+
+            <!-- Add New Rule Form -->
+            <div class="mt-6 border-t border-gray-200 pt-6">
+                <h4 class="text-sm font-medium text-gray-900">Add New Rule</h4>
+                <form hx-post="/dashboard/buckets/{{.Bucket.Name}}/lifecycle" hx-swap="none" class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-4">
+                    <div>
+                        <label for="rule_id" class="block text-sm font-medium text-gray-700">Rule ID</label>
+                        <input type="text" name="rule_id" id="rule_id" required 
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                            placeholder="expire-old-logs">
+                    </div>
+                    <div>
+                        <label for="prefix" class="block text-sm font-medium text-gray-700">Prefix (optional)</label>
+                        <input type="text" name="prefix" id="prefix" 
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                            placeholder="logs/">
+                    </div>
+                    <div>
+                        <label for="expiration_days" class="block text-sm font-medium text-gray-700">Expiration (Days)</label>
+                        <input type="number" name="expiration_days" id="expiration_days" min="1" required 
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                            placeholder="30">
+                    </div>
+                    <div class="flex items-end">
+                        <button type="submit" class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500">
+                            Add Rule
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.body.addEventListener('lifecycleUpdated', function() {
+        window.location.reload();
+    });
+    document.body.addEventListener('bucketUpdated', function() {
+        window.location.reload();
+    });
+</script>
+{{end}}

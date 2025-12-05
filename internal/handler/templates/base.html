@@ -1,0 +1,56 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="h-full">
+    {{if .Username}}
+    <nav class="bg-gray-800">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div class="flex h-16 items-center justify-between">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <span class="text-white text-xl font-bold">Alexander Storage</span>
+                    </div>
+                    <div class="hidden md:block">
+                        <div class="ml-10 flex items-baseline space-x-4">
+                            <a href="/dashboard" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium">Dashboard</a>
+                            <a href="/dashboard/users" class="text-gray-300 hover:bg-gray-700 hover:text-white rounded-md px-3 py-2 text-sm font-medium">Users</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center">
+                    <span class="text-gray-300 mr-4">{{.Username}}</span>
+                    <button hx-post="/dashboard/logout" hx-swap="none" class="bg-red-600 hover:bg-red-700 text-white rounded-md px-3 py-2 text-sm font-medium">
+                        Logout
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+    {{end}}
+    <main class="min-h-full">
+        {{if .Error}}
+        <div class="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+            <div class="rounded-md bg-red-50 p-4">
+                <div class="text-sm text-red-700">{{.Error}}</div>
+            </div>
+        </div>
+        {{end}}
+        {{if .Success}}
+        <div class="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+            <div class="rounded-md bg-green-50 p-4">
+                <div class="text-sm text-green-700">{{.Success}}</div>
+            </div>
+        </div>
+        {{end}}
+        {{template "content" .}}
+    </main>
+</body>
+</html>
+{{end}}

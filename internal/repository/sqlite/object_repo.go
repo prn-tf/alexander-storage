@@ -480,7 +480,7 @@ func (r *objectRepository) ListExpiredObjects(ctx context.Context, bucketID int6
 			obj.ETag = etag.String
 		}
 		if storageClass.Valid {
-			obj.StorageClass = storageClass.String
+			obj.StorageClass = domain.StorageClass(storageClass.String)
 		}
 		if metadataJSON.Valid && metadataJSON.String != "" {
 			_ = json.Unmarshal([]byte(metadataJSON.String), &obj.Metadata)

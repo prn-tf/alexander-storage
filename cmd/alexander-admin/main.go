@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,9 @@ func main() {
 	case "gc":
 		handleGCCommand(os.Args[2:])
 
+	case "encrypt":
+		handleEncryptCommand(os.Args[2:])
+
 	case "help", "-h", "--help":
 		printUsage()
 
@@ -85,6 +89,7 @@ Commands:
   accesskey   Manage access keys (create, list, revoke)
   bucket      Manage buckets (list, delete, set-versioning)
   gc          Run garbage collection for orphan blobs
+  encrypt     Encrypt existing unencrypted blobs (SSE-S3 migration)
   version     Print version information
   help        Show this help message
 
@@ -95,6 +100,7 @@ Examples:
   alexander-admin accesskey list --user-id 1
   alexander-admin bucket list
   alexander-admin gc run --dry-run
+  alexander-admin encrypt run --batch-size 100
 
 Use "alexander-admin <command> --help" for more information about a command.`)
 }
@@ -1040,4 +1046,236 @@ func generateSecurePassword(length int) string {
 		time.Sleep(time.Nanosecond)
 	}
 	return string(b)
+}
+
+// =============================================================================
+// Encrypt Commands (SSE-S3 Migration)
+// =============================================================================
+
+func handleEncryptCommand(args []string) {
+	if len(args) == 0 {
+		printEncryptUsage()
+		os.Exit(1)
+	}
+
+	subcommand := args[0]
+	subArgs := args[1:]
+
+	switch subcommand {
+	case "run":
+		encryptRun(subArgs)
+	case "status":
+		encryptStatus(subArgs)
+	case "help", "-h", "--help":
+		printEncryptUsage()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown encrypt subcommand: %s\n", subcommand)
+		printEncryptUsage()
+		os.Exit(1)
+	}
+}
+
+func printEncryptUsage() {
+	fmt.Println(`Encrypt commands - SSE-S3 migration for existing blobs
+
+Usage:
+  alexander-admin encrypt <subcommand> [arguments]
+
+Subcommands:
+  run         Encrypt unencrypted blobs
+  status      Show encryption status
+
+Examples:
+  alexander-admin encrypt status
+  alexander-admin encrypt run --batch-size 100 --dry-run
+  alexander-admin encrypt run --batch-size 500`)
+}
+
+func encryptStatus(args []string) {
+	fs := flag.NewFlagSet("encrypt status", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output in JSON format")
+
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+
+	adminCtx, err := initAdminContext()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer adminCtx.dbCloser()
+
+	// Count unencrypted blobs
+	unencrypted, err := adminCtx.repos.Blob.ListUnencrypted(adminCtx.ctx, 10000)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing unencrypted blobs: %v\n", err)
+		os.Exit(1)
+	}
+
+	var totalSize int64
+	for _, blob := range unencrypted {
+		totalSize += blob.Size
+	}
+
+	if *jsonOutput {
+		result := map[string]interface{}{
+			"unencrypted_count": len(unencrypted),
+			"unencrypted_size":  totalSize,
+		}
+		jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(jsonBytes))
+	} else {
+		fmt.Printf("SSE-S3 Encryption Status:\n")
+		fmt.Printf("  Unencrypted Blobs:  %d\n", len(unencrypted))
+		fmt.Printf("  Unencrypted Size:   %s\n", formatBytes(totalSize))
+		if len(unencrypted) >= 10000 {
+			fmt.Printf("\n  Note: Count may be higher (limited to 10000)\n")
+		}
+		if len(unencrypted) == 0 {
+			fmt.Printf("\n✅ All blobs are encrypted!\n")
+		} else {
+			fmt.Printf("\n⚠️  Run 'alexander-admin encrypt run' to encrypt blobs\n")
+		}
+	}
+}
+
+func encryptRun(args []string) {
+	fs := flag.NewFlagSet("encrypt run", flag.ExitOnError)
+	batchSize := fs.Int("batch-size", 100, "Number of blobs to process per batch")
+	dryRun := fs.Bool("dry-run", false, "Show what would be encrypted without making changes")
+	jsonOutput := fs.Bool("json", false, "Output in JSON format")
+
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+
+	adminCtx, err := initAdminContext()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer adminCtx.dbCloser()
+
+	// Initialize storage backend
+	storageBackend, err := filesystem.NewStorage(filesystem.Config{
+		DataDir: adminCtx.cfg.Storage.DataDir,
+		TempDir: adminCtx.cfg.Storage.TempDir,
+	}, adminCtx.logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing storage: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Get SSE master key
+	sseKeyHex := adminCtx.cfg.Auth.SSEMasterKey
+	if sseKeyHex == "" {
+		fmt.Fprintln(os.Stderr, "Error: SSE master key not configured (auth.sse_master_key)")
+		os.Exit(1)
+	}
+
+	sseEncryptor, err := crypto.NewSSEEncryptorFromHex(sseKeyHex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing SSE encryptor: %v\n", err)
+		os.Exit(1)
+	}
+
+	var totalProcessed, totalEncrypted, totalErrors int
+	var totalBytesEncrypted int64
+
+	for {
+		unencrypted, err := adminCtx.repos.Blob.ListUnencrypted(adminCtx.ctx, *batchSize)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing unencrypted blobs: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(unencrypted) == 0 {
+			break
+		}
+
+		for _, blob := range unencrypted {
+			totalProcessed++
+
+			if *dryRun {
+				if !*jsonOutput {
+					fmt.Printf("Would encrypt: %s (%s)\n", blob.ContentHash, formatBytes(blob.Size))
+				}
+				totalEncrypted++
+				totalBytesEncrypted += blob.Size
+				continue
+			}
+
+			// Read plaintext data
+			reader, err := storageBackend.Retrieve(adminCtx.ctx, blob.ContentHash)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading blob %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+			plaintext, err := io.ReadAll(reader)
+			reader.Close()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading blob data %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			// Encrypt the data
+			ciphertext, err := sseEncryptor.EncryptBlob(plaintext, blob.ContentHash)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error encrypting blob %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			// Write encrypted data back (overwrite in place)
+			storagePath := storageBackend.GetPath(blob.ContentHash)
+			if err := os.WriteFile(storagePath, ciphertext, 0600); err != nil {
+				fmt.Fprintf(os.Stderr, "Error storing encrypted blob %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			// Extract IV (nonce) from the ciphertext for database record
+			// The nonce is the first 12 bytes of the ciphertext
+			iv := fmt.Sprintf("%x", ciphertext[:12])
+
+			// Update database
+			if err := adminCtx.repos.Blob.UpdateEncrypted(adminCtx.ctx, blob.ContentHash, iv); err != nil {
+				fmt.Fprintf(os.Stderr, "Error updating blob record %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			totalEncrypted++
+			totalBytesEncrypted += blob.Size
+
+			if !*jsonOutput {
+				fmt.Printf("Encrypted: %s (%s)\n", blob.ContentHash, formatBytes(blob.Size))
+			}
+		}
+	}
+
+	if *jsonOutput {
+		result := map[string]interface{}{
+			"processed":       totalProcessed,
+			"encrypted":       totalEncrypted,
+			"errors":          totalErrors,
+			"bytes_encrypted": totalBytesEncrypted,
+			"dry_run":         *dryRun,
+		}
+		jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(jsonBytes))
+	} else {
+		fmt.Printf("\nEncryption Complete:\n")
+		fmt.Printf("  Processed:  %d blobs\n", totalProcessed)
+		fmt.Printf("  Encrypted:  %d blobs (%s)\n", totalEncrypted, formatBytes(totalBytesEncrypted))
+		if totalErrors > 0 {
+			fmt.Printf("  Errors:     %d\n", totalErrors)
+		}
+		if *dryRun {
+			fmt.Printf("\n(Dry run - no changes made)\n")
+		}
+	}
 }

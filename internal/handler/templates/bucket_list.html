@@ -1,0 +1,32 @@
+{{define "bucket_list.html"}}
+{{if .}}
+<div class="overflow-hidden shadow ring-1 ring-black ring-opacity-5 sm:rounded-lg">
+    <table class="min-w-full divide-y divide-gray-300">
+        <thead class="bg-gray-50">
+            <tr>
+                <th scope="col" class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">Name</th>
+                <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Region</th>
+                <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">ACL</th>
+                <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Created</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200 bg-white">
+            {{range .}}
+            <tr>
+                <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-gray-900 sm:pl-6">
+                    <a href="/dashboard/buckets/{{.Name}}" class="text-indigo-600 hover:text-indigo-900">{{.Name}}</a>
+                </td>
+                <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{.Region}}</td>
+                <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{.ACL}}</td>
+                <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{.CreatedAt.Format "Jan 02, 2006"}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{else}}
+<div class="text-center py-12">
+    <p class="text-sm text-gray-500">No buckets found.</p>
+</div>
+{{end}}
+{{end}}

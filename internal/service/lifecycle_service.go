@@ -212,6 +212,32 @@ func (s *LifecycleService) DeleteRule(ctx context.Context, ruleID int64) error {
 	return nil
 }
 
+// DeleteRuleByName deletes a lifecycle rule by bucket name and rule ID string.
+func (s *LifecycleService) DeleteRuleByName(ctx context.Context, bucketName, ruleIDStr string) error {
+	// Get bucket
+	bucket, err := s.bucketRepo.GetByName(ctx, bucketName)
+	if err != nil {
+		if err == repository.ErrNotFound {
+			return fmt.Errorf("bucket not found: %s", bucketName)
+		}
+		return fmt.Errorf("%w: %v", ErrInternalError, err)
+	}
+
+	// Find rule by ruleID string
+	rules, err := s.lifecycleRepo.ListByBucket(ctx, bucket.ID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInternalError, err)
+	}
+
+	for _, rule := range rules {
+		if rule.RuleID == ruleIDStr {
+			return s.DeleteRule(ctx, rule.ID)
+		}
+	}
+
+	return ErrLifecycleRuleNotFound
+}
+
 // Start begins the lifecycle scheduler.
 func (s *LifecycleService) Start() {
 	s.mu.Lock()

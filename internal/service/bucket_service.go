@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/prn-tf/alexander-storage/internal/auth"
 	"github.com/prn-tf/alexander-storage/internal/domain"
 	"github.com/prn-tf/alexander-storage/internal/repository"
 )
@@ -314,3 +315,41 @@ func (s *BucketService) PutBucketVersioning(ctx context.Context, input PutBucket
 
 	return nil
 }
+
+// GetBucketACL retrieves the ACL for a bucket.
+func (s *BucketService) GetBucketACL(ctx context.Context, bucketName string) (domain.BucketACL, error) {
+	acl, err := s.bucketRepo.GetACLByName(ctx, bucketName)
+	if err != nil {
+		if errors.Is(err, domain.ErrBucketNotFound) {
+			return "", nil // Return empty string for not found
+		}
+		return "", fmt.Errorf("%w: %v", ErrInternalError, err)
+	}
+	return acl, nil
+}
+
+// =============================================================================
+// BucketACLAdapter
+// =============================================================================
+
+// BucketACLAdapter adapts BucketService to implement auth.BucketACLChecker interface.
+type BucketACLAdapter struct {
+	bucketService *BucketService
+}
+
+// NewBucketACLAdapter creates a new adapter.
+func NewBucketACLAdapter(bucketService *BucketService) *BucketACLAdapter {
+	return &BucketACLAdapter{bucketService: bucketService}
+}
+
+// GetBucketACL implements auth.BucketACLChecker.
+func (a *BucketACLAdapter) GetBucketACL(ctx context.Context, bucketName string) (string, error) {
+	acl, err := a.bucketService.GetBucketACL(ctx, bucketName)
+	if err != nil {
+		return "", err
+	}
+	return string(acl), nil
+}
+
+// Ensure BucketACLAdapter implements auth.BucketACLChecker
+var _ auth.BucketACLChecker = (*BucketACLAdapter)(nil)
