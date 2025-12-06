@@ -3,6 +3,8 @@ module github.com/prn-tf/alexander-storage
 go 1.24.0
 
 require (
+	github.com/aws/aws-sdk-go-v2 v1.32.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.74.0
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6

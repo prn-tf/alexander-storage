@@ -58,6 +58,64 @@ variable "certificate_arn" {
   type        = string
 }
 
+variable "db_password" {
+  description = "RDS database password (keep secure!)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+resource "random_password" "rds_password" {
+  length  = 32
+  special = true
+}
+
+# KMS Key for encryption
+resource "aws_kms_key" "rds" {
+  description             = "KMS key for Alexander RDS encryption"
+  deletion_window_in_days = 10
+  enable_key_rotation     = true
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "Enable IAM policies"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action   = "kms:*"
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow RDS"
+        Effect = "Allow"
+        Principal = {
+          Service = "rds.amazonaws.com"
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:CreateGrant"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+  
+  tags = {
+    Name = "alexander-${var.environment}-rds-key"
+  }
+}
+
+resource "aws_kms_alias" "rds" {
+  name          = "alias/alexander-${var.environment}-rds"
+  target_key_id = aws_kms_key.rds.key_id
+}
+
+data "aws_caller_identity" "current" {}
+
 # RDS PostgreSQL
 module "postgresql" {
   source  = "terraform-aws-modules/rds/aws"
@@ -76,11 +134,19 @@ module "postgresql" {
   
   db_name  = "alexander"
   username = "alexander"
+  password = var.db_password != "" ? var.db_password : random_password.rds_password.result
   port     = 5432
   
   multi_az               = true
   db_subnet_group_name   = aws_db_subnet_group.alexander.name
   vpc_security_group_ids = [aws_security_group.rds.id]
+  
+  # SECURITY: Enable encryption at rest
+  storage_encrypted = true
+  kms_key_id        = aws_kms_key.rds.arn
+  
+  # SECURITY: Enable encryption in transit
+  ssl_mode = "require"
   
   maintenance_window      = "Mon:00:00-Mon:03:00"
   backup_window           = "03:00-06:00"
@@ -90,6 +156,7 @@ module "postgresql" {
   
   performance_insights_enabled          = true
   performance_insights_retention_period = 7
+  performance_insights_kms_key_id       = aws_kms_key.rds.arn
   
   create_cloudwatch_log_group     = true
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]

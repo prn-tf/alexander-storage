@@ -20,6 +20,8 @@ spec:
       securityContext:
         fsGroup: 1000
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: alexander
           image: ghcr.io/neuralforgeone/alexander-storage:latest
@@ -52,13 +54,19 @@ spec:
               cpu: 1000m
               memory: 1Gi
           volumeMounts:
+            # Data volume: writable, owned by app user
             - name: data
               mountPath: /var/lib/alexander
+            # Config volume: read-only
             - name: config
               mountPath: /etc/alexander
               readOnly: true
+            # Temp directory: separate volume for safe writes
             - name: tmp
               mountPath: /tmp
+            # Cache directory: for app-generated cache
+            - name: cache
+              mountPath: /var/cache/alexander
           livenessProbe:
             httpGet:
               path: /healthz
@@ -76,11 +84,20 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
       volumes:
+        # Data volume: PVC for persistent storage
         - name: data
           persistentVolumeClaim:
             claimName: alexander-data
+        # Config: read-only ConfigMap
         - name: config
           configMap:
             name: alexander-config-file
+            defaultMode: 0444
+        # Temp: ephemeral storage with restrictive permissions
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 512Mi
+        # Cache: ephemeral cache storage
+        - name: cache
+          emptyDir:
+            sizeLimit: 256Mi

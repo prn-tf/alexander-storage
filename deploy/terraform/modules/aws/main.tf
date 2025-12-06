@@ -49,6 +49,18 @@ variable "instance_type" {
   default     = "t3.small"
 }
 
+variable "allowed_cidr" {
+  description = "CIDR block allowed for HTTP/HTTPS access (null means 0.0.0.0/0)"
+  type        = string
+  default     = null
+}
+
+variable "associate_public_ip" {
+  description = "Whether to associate public IPs with instances"
+  type        = bool
+  default     = false
+}
+
 variable "min_size" {
   description = "Minimum number of instances"
   type        = number
@@ -186,41 +198,66 @@ resource "aws_security_group" "alexander" {
   description = "Security group for Alexander Storage"
   vpc_id      = var.vpc_id
   
-  # HTTP
-  ingress {
-    description = "HTTP"
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  
-  # HTTPS
-  ingress {
-    description = "HTTPS"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  
-  # gRPC cluster communication
-  ingress {
-    description = "gRPC Cluster"
-    from_port   = 9090
-    to_port     = 9090
-    protocol    = "tcp"
-    self        = true
-  }
-  
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  
   tags = local.common_tags
+}
+
+# HTTP ingress rule
+resource "aws_vpc_security_group_ingress_rule" "http" {
+  description       = "Allow HTTP from anywhere"
+  security_group_id = aws_security_group.alexander.id
+  from_port         = 8080
+  to_port           = 8080
+  ip_protocol       = "tcp"
+  cidr_ipv4         = var.allowed_cidr != null ? var.allowed_cidr : "0.0.0.0/0"
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-http-ingress" })
+}
+
+# HTTPS ingress rule
+resource "aws_vpc_security_group_ingress_rule" "https" {
+  description       = "Allow HTTPS from anywhere"
+  security_group_id = aws_security_group.alexander.id
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  cidr_ipv4         = var.allowed_cidr != null ? var.allowed_cidr : "0.0.0.0/0"
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-https-ingress" })
+}
+
+# gRPC cluster communication - only from within SG
+resource "aws_vpc_security_group_ingress_rule" "grpc" {
+  description                  = "Allow gRPC cluster communication within security group"
+  security_group_id            = aws_security_group.alexander.id
+  from_port                    = 9090
+  to_port                      = 9090
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alexander.id
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-grpc-ingress" })
+}
+
+# Egress rule - restrict to known services
+resource "aws_vpc_security_group_egress_rule" "allowed_egress" {
+  description       = "Allow outbound HTTPS for external services"
+  security_group_id = aws_security_group.alexander.id
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  cidr_ipv4         = "0.0.0.0/0"
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-https-egress" })
+}
+
+resource "aws_vpc_security_group_egress_rule" "dns_egress" {
+  description       = "Allow DNS queries"
+  security_group_id = aws_security_group.alexander.id
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+  cidr_ipv4         = "0.0.0.0/0"
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-dns-egress" })
 }
 
 # IAM Role for EC2
@@ -321,8 +358,17 @@ resource "aws_launch_template" "alexander" {
     name = aws_iam_instance_profile.alexander.name
   }
   
+  # SECURITY: Enforce IMDSv2 only
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"  # Enforce IMDSv2
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "enabled"
+  }
+  
+  # SECURITY: Disable public IP assignment by default
   network_interfaces {
-    associate_public_ip_address = true
+    associate_public_ip_address = var.associate_public_ip
     security_groups             = [aws_security_group.alexander.id]
   }
   
