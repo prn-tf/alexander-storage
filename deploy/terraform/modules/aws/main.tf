@@ -177,6 +177,30 @@ variable "tags" {
   default     = {}
 }
 
+variable "enable_alb_access_logs" {
+  description = "Enable ALB access logging"
+  type        = bool
+  default     = true
+}
+
+variable "alb_access_logs_bucket" {
+  description = "S3 bucket for ALB access logs"
+  type        = string
+  default     = ""
+}
+
+variable "enable_waf" {
+  description = "Enable AWS WAF for ALB protection"
+  type        = bool
+  default     = true
+}
+
+variable "waf_web_acl_arn" {
+  description = "WAF Web ACL ARN (if not provided and enable_waf is true, a basic ACL will be created)"
+  type        = string
+  default     = ""
+}
+
 # Locals
 locals {
   common_tags = merge({
@@ -515,8 +539,91 @@ resource "aws_lb" "alexander" {
   subnets            = var.subnet_ids
   
   enable_deletion_protection = var.environment == "production"
+  drop_invalid_header_fields = true
+  
+  dynamic "access_logs" {
+    for_each = var.enable_alb_access_logs && var.alb_access_logs_bucket != "" ? [1] : []
+    content {
+      bucket  = var.alb_access_logs_bucket
+      prefix  = "${var.name}-${var.environment}"
+      enabled = true
+    }
+  }
   
   tags = local.common_tags
+}
+
+# WAF Web ACL for ALB protection
+resource "aws_wafv2_web_acl" "alexander" {
+  count = var.enable_waf && var.waf_web_acl_arn == "" ? 1 : 0
+  
+  name        = "${var.name}-${var.environment}-waf"
+  description = "WAF rules for Alexander Storage ALB"
+  scope       = "REGIONAL"
+  
+  default_action {
+    allow {}
+  }
+  
+  rule {
+    name     = "AWSManagedRulesCommonRuleSet"
+    priority = 1
+    
+    override_action {
+      none {}
+    }
+    
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesCommonRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+    
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.name}-common-rules"
+      sampled_requests_enabled   = true
+    }
+  }
+  
+  rule {
+    name     = "AWSManagedRulesKnownBadInputsRuleSet"
+    priority = 2
+    
+    override_action {
+      none {}
+    }
+    
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesKnownBadInputsRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+    
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.name}-bad-inputs"
+      sampled_requests_enabled   = true
+    }
+  }
+  
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "${var.name}-waf"
+    sampled_requests_enabled   = true
+  }
+  
+  tags = local.common_tags
+}
+
+# WAF Association with ALB
+resource "aws_wafv2_web_acl_association" "alexander" {
+  count = var.enable_waf ? 1 : 0
+  
+  resource_arn = aws_lb.alexander.arn
+  web_acl_arn  = var.waf_web_acl_arn != "" ? var.waf_web_acl_arn : aws_wafv2_web_acl.alexander[0].arn
 }
 
 resource "aws_lb_target_group" "alexander" {
@@ -545,18 +652,13 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
   
   default_action {
-    type = var.enable_ssl ? "redirect" : "forward"
+    type = "redirect"
     
-    dynamic "redirect" {
-      for_each = var.enable_ssl ? [1] : []
-      content {
-        port        = "443"
-        protocol    = "HTTPS"
-        status_code = "HTTP_301"
-      }
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
     }
-    
-    target_group_arn = var.enable_ssl ? null : aws_lb_target_group.alexander.arn
   }
 }
 
