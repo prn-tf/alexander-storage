@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -161,8 +162,8 @@ func TestBucketVersioning(t *testing.T) {
 	t.Run("PutBucketVersioning_Enable", func(t *testing.T) {
 		_, err := client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
 			Bucket: aws.String(bucketName),
-			VersioningConfiguration: &s3.types.VersioningConfiguration{
-				Status: s3.types.BucketVersioningStatusEnabled,
+			VersioningConfiguration: &types.VersioningConfiguration{
+				Status: types.BucketVersioningStatusEnabled,
 			},
 		})
 		require.NoError(t, err)
@@ -173,14 +174,14 @@ func TestBucketVersioning(t *testing.T) {
 			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err)
-		require.Equal(t, s3.types.BucketVersioningStatusEnabled, result.Status)
+		require.Equal(t, types.BucketVersioningStatusEnabled, result.Status)
 	})
 
 	t.Run("PutBucketVersioning_Suspend", func(t *testing.T) {
 		_, err := client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
 			Bucket: aws.String(bucketName),
-			VersioningConfiguration: &s3.types.VersioningConfiguration{
-				Status: s3.types.BucketVersioningStatusSuspended,
+			VersioningConfiguration: &types.VersioningConfiguration{
+				Status: types.BucketVersioningStatusSuspended,
 			},
 		})
 		require.NoError(t, err)
@@ -191,6 +192,6 @@ func TestBucketVersioning(t *testing.T) {
 			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err)
-		require.Equal(t, s3.types.BucketVersioningStatusSuspended, result.Status)
+		require.Equal(t, types.BucketVersioningStatusSuspended, result.Status)
 	})
 }
